@@ -6,15 +6,10 @@ type PluginReadyMessage = {
   message: string;
 };
 
-type RenderPlaceholderMessage = {
-  type: "render-placeholder";
+type RenderCompleteMessage = {
+  type: "render-complete";
   message: string;
-  received: {
-    characters: number;
-    replacePrevious: boolean;
-    direction: DirectionOverride;
-    spacing: SpacingPreset;
-  };
+  nodeId: string;
 };
 
 type RenderErrorMessage = {
@@ -22,7 +17,7 @@ type RenderErrorMessage = {
   message: string;
 };
 
-type PluginMessage = PluginReadyMessage | RenderPlaceholderMessage | RenderErrorMessage;
+type PluginMessage = PluginReadyMessage | RenderCompleteMessage | RenderErrorMessage;
 
 const statusElement = document.querySelector<HTMLParagraphElement>("#status");
 const errorElement = document.querySelector<HTMLParagraphElement>("#error-message");
@@ -130,11 +125,9 @@ window.onmessage = (event: MessageEvent<{ pluginMessage?: PluginMessage }>) => {
     return;
   }
 
-  if (message.type === "render-placeholder") {
+  if (message.type === "render-complete") {
     setError(null);
-    setStatus(
-      `${message.message} ${message.received.characters} characters queued with ${message.received.spacing} spacing.`,
-    );
+    setStatus(message.message);
   }
 };
 
