@@ -61,9 +61,11 @@ The pipeline is intentionally separated:
 
 Supported:
 
-- `flowchart TD`, `flowchart LR`, `graph TD`, and `graph LR`
+- `flowchart TD`, `flowchart TB`, `flowchart LR`, `graph TD`, `graph TB`, and `graph LR`
 - basic node labels and common v1 shapes
+- quoted labels with punctuation, multiline text, and simple inline HTML-like content
 - edge labels
+- fan-out edge targets with `&`, such as `A --> B & C & D`
 - basic subgraphs
 - `classDef` and `class` for node styling
 - style mapping for `fill`, `stroke`, `color`, and `stroke-width`

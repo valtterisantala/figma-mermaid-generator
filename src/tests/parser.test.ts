@@ -60,7 +60,7 @@ describe("parseMermaidFlowchart", () => {
 
   it("rejects unsupported diagram directions with a useful line number", () => {
     expect(() => parseMermaidFlowchart("flowchart BT\nA --> B")).toThrow(
-      new MermaidParseError("Only TD and LR flowchart directions are supported.", 1),
+      new MermaidParseError("Only TD, TB, and LR flowchart directions are supported.", 1),
     );
   });
 
@@ -96,5 +96,86 @@ describe("parseMermaidFlowchart", () => {
     expect(diagram.nodes.find((node) => node.id === "A")?.classIds).toEqual(["primary"]);
     expect(diagram.nodes.find((node) => node.id === "B")?.classIds).toEqual(["warning"]);
     expect(diagram.nodes.find((node) => node.id === "C")?.classIds).toEqual(["primary"]);
+  });
+
+  it("treats TB as a TD direction alias", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TB
+      A[Start] --> B[Done]`);
+
+    expect(diagram.direction).toBe("TD");
+  });
+
+  it("preserves quoted labels with punctuation and inline HTML-like content", () => {
+    const diagram = parseMermaidFlowchart(`flowchart LR
+      opk["<b>OPK</b><br/>Skills & knowledge-base mapping"]
+      opk --> skills["Skills: prompt design, tools, QA"]`);
+
+    expect(diagram.nodes.find((node) => node.id === "opk")?.label).toBe(
+      "<b>OPK</b><br/>Skills & knowledge-base mapping",
+    );
+    expect(diagram.nodes.find((node) => node.id === "skills")?.label).toBe(
+      "Skills: prompt design, tools, QA",
+    );
+    expect(diagram.edges).toHaveLength(1);
+  });
+
+  it("supports multiline quoted node labels", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TB
+      kb["Knowledge base
+with curated examples
+and candidate branches"] --> future["Future branch
+candidate node"]`);
+
+    expect(diagram.nodes.find((node) => node.id === "kb")?.label).toBe(
+      "Knowledge base\nwith curated examples\nand candidate branches",
+    );
+    expect(diagram.nodes.find((node) => node.id === "future")?.label).toBe(
+      "Future branch\ncandidate node",
+    );
+  });
+
+  it("expands fan-out edges with ampersand targets", () => {
+    const diagram = parseMermaidFlowchart(`flowchart LR
+      A["Central OPK map"] --> B["Skills"] & C["Knowledge base"] & D["Evaluation"]`);
+
+    expect(diagram.edges).toEqual([
+      expect.objectContaining({ from: "A", to: "B" }),
+      expect.objectContaining({ from: "A", to: "C" }),
+      expect.objectContaining({ from: "A", to: "D" }),
+    ]);
+  });
+
+  it("supports subgraph declarations with readable titles", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TB
+      subgraph Skills Layer
+        A["Skill inventory"] --> B["Skill gaps"]
+      end
+      subgraph kb["Knowledge Base"]
+        C["Source docs"] --> D["Reusable patterns"]
+      end`);
+
+    expect(diagram.subgraphs).toEqual([
+      expect.objectContaining({
+        id: "Skills_Layer",
+        label: "Skills Layer",
+        nodeIds: ["A", "B"],
+      }),
+      expect.objectContaining({
+        id: "kb",
+        label: "Knowledge Base",
+        nodeIds: ["C", "D"],
+      }),
+    ]);
+  });
+
+  it("handles dense sibling branches under one parent", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TB
+      root["Knowledge base map"] --> docs["Docs"] & prompts["Prompt examples"] & tools["Tools"] & qa["QA checks"] & future["Future candidates"]
+      docs --> docsA["API notes"] & docsB["Plugin notes"] & docsC["Design notes"]
+      future --> branchA["Candidate branch A"] & branchB["Candidate branch B"]`);
+
+    expect(diagram.nodes).toHaveLength(11);
+    expect(diagram.edges).toHaveLength(10);
+    expect(diagram.nodes.find((node) => node.id === "future")?.label).toBe("Future candidates");
   });
 });

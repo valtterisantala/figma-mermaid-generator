@@ -36,9 +36,27 @@ type ParsedNodeReference = {
   shape?: NodeShape;
 };
 
-const directionPattern = /^(?:flowchart|graph)\s+(TD|LR)$/i;
+type MermaidStatement = {
+  text: string;
+  lineNumber: number;
+};
+
+type EdgeParts = {
+  left: string;
+  marker: string;
+  label?: string;
+  right: string;
+};
+
+type ScanState = {
+  quote: '"' | "'" | null;
+  squareDepth: number;
+  parenDepth: number;
+  braceDepth: number;
+};
+
+const directionPattern = /^(?:flowchart|graph)\s+(TD|TB|LR)$/i;
 const supportedHeaderPattern = /^(?:flowchart|graph)\b/i;
-const edgePattern = /^(.+?)\s*(-{2,3}>?|==+>?)\s*(?:\|([^|]+)\|\s*)?(.+)$/;
 
 export function parseMermaidFlowchart(source: string): DiagramModel {
   const lines = source.split(/\r?\n/);
@@ -55,8 +73,8 @@ export function parseMermaidFlowchart(source: string): DiagramModel {
     subgraphStack: [],
   };
 
-  for (let index = header.index + 1; index < lines.length; index += 1) {
-    parseStatement(lines[index], index + 1, context);
+  for (const statement of collectStatements(lines, header.index + 1)) {
+    parseStatement(statement.text, statement.lineNumber, context);
   }
 
   if (context.subgraphStack.length > 0) {
@@ -91,12 +109,15 @@ function findHeader(lines: string[]): { index: number; direction: DiagramDirecti
     if (match) {
       return {
         index,
-        direction: match[1].toUpperCase() as DiagramDirection,
+        direction: normalizeDirection(match[1]),
       };
     }
 
     if (supportedHeaderPattern.test(statement)) {
-      throw new MermaidParseError("Only TD and LR flowchart directions are supported.", index + 1);
+      throw new MermaidParseError(
+        "Only TD, TB, and LR flowchart directions are supported.",
+        index + 1,
+      );
     }
 
     throw new MermaidParseError(
@@ -109,7 +130,7 @@ function findHeader(lines: string[]): { index: number; direction: DiagramDirecti
 }
 
 function parseStatement(rawLine: string, lineNumber: number, context: ParseContext): void {
-  const statement = cleanLine(rawLine);
+  const statement = rawLine.trim();
 
   if (statement.length === 0) {
     return;
@@ -135,9 +156,9 @@ function parseStatement(rawLine: string, lineNumber: number, context: ParseConte
     return;
   }
 
-  const edgeMatch = statement.match(edgePattern);
-  if (edgeMatch) {
-    parseEdge(edgeMatch, lineNumber, context);
+  const edgeParts = splitEdgeStatement(statement);
+  if (edgeParts) {
+    parseEdge(edgeParts, lineNumber, context);
     return;
   }
 
@@ -146,8 +167,8 @@ function parseStatement(rawLine: string, lineNumber: number, context: ParseConte
 
 function parseSubgraph(statement: string, lineNumber: number, context: ParseContext): void {
   const declaration = statement.slice("subgraph ".length).trim();
-  const parsed = parseNodeReference(declaration, lineNumber);
-  const label = parsed.label ?? parsed.sourceId;
+  const parsed = parseSubgraphDeclaration(declaration, lineNumber);
+  const label = parsed.label;
   const id = normalizeScopedId(parsed.sourceId);
 
   if (context.subgraphs.has(id)) {
@@ -218,28 +239,33 @@ function parseClassAssignment(statement: string, lineNumber: number, context: Pa
   }
 }
 
-function parseEdge(match: RegExpMatchArray, lineNumber: number, context: ParseContext): void {
-  const [, leftRaw, marker, labelRaw, rightRaw] = match;
-  const left = parseNodeReference(leftRaw.trim(), lineNumber);
-  const right = parseNodeReference(rightRaw.trim(), lineNumber);
-  const from = upsertNode(left, lineNumber, context);
-  const to = upsertNode(right, lineNumber, context);
-  const label = labelRaw?.trim();
-  const edgeIndex = context.edges.length + 1;
-  const id = createEdgeId(from.id, to.id, label, edgeIndex);
-  const edge: DiagramEdge = {
-    id,
-    sourceId: id,
-    from: from.id,
-    to: to.id,
-    kind: marker.includes(">") ? "arrow" : ("line" satisfies EdgeKind),
-    label: label && label.length > 0 ? label : undefined,
-    classIds: [],
-    subgraphId: getCurrentSubgraphId(context),
-  };
+function parseEdge(edgeParts: EdgeParts, lineNumber: number, context: ParseContext): void {
+  const leftReferences = splitNodeReferences(edgeParts.left, lineNumber);
+  const rightReferences = splitNodeReferences(edgeParts.right, lineNumber);
+  const label = edgeParts.label?.trim();
 
-  context.edges.push(edge);
-  addEdgeToCurrentSubgraph(edge.id, context);
+  for (const leftReference of leftReferences) {
+    const from = upsertNode(leftReference, lineNumber, context);
+
+    for (const rightReference of rightReferences) {
+      const to = upsertNode(rightReference, lineNumber, context);
+      const edgeIndex = context.edges.length + 1;
+      const id = createEdgeId(from.id, to.id, label, edgeIndex);
+      const edge: DiagramEdge = {
+        id,
+        sourceId: id,
+        from: from.id,
+        to: to.id,
+        kind: edgeParts.marker.includes(">") ? "arrow" : ("line" satisfies EdgeKind),
+        label: label && label.length > 0 ? label : undefined,
+        classIds: [],
+        subgraphId: getCurrentSubgraphId(context),
+      };
+
+      context.edges.push(edge);
+      addEdgeToCurrentSubgraph(edge.id, context);
+    }
+  }
 }
 
 function parseNodeStatement(statement: string, lineNumber: number, context: ParseContext): void {
@@ -293,6 +319,14 @@ function parseNodeReference(source: string, lineNumber: number): ParsedNodeRefer
     return shape;
   }
 
+  if (isQuoted(trimmed)) {
+    const label = unquote(trimmed);
+    return {
+      sourceId: label,
+      label,
+    };
+  }
+
   if (!isValidSourceId(trimmed)) {
     throw new MermaidParseError(`Unsupported node reference "${trimmed}".`, lineNumber);
   }
@@ -304,12 +338,12 @@ function parseNodeReference(source: string, lineNumber: number): ParsedNodeRefer
 
 function parseShapedNode(source: string): ParsedNodeReference | null {
   const shapePatterns: Array<[RegExp, NodeShape]> = [
-    [/^([A-Za-z_][\w-]*)\s*\(\((.+)\)\)$/, "circle"],
-    [/^([A-Za-z_][\w-]*)\s*\(\[(.+)\]\)$/, "stadium"],
-    [/^([A-Za-z_][\w-]*)\s*\[(.+)\]$/, "rectangle"],
-    [/^([A-Za-z_][\w-]*)\s*\((.+)\)$/, "rounded"],
-    [/^([A-Za-z_][\w-]*)\s*\{(.+)\}$/, "diamond"],
-    [/^([A-Za-z_][\w-]*)\s*>(.+)\]$/, "asymmetric"],
+    [/^([A-Za-z_][\w-]*)\s*\(\(([\s\S]+)\)\)$/, "circle"],
+    [/^([A-Za-z_][\w-]*)\s*\(\[([\s\S]+)\]\)$/, "stadium"],
+    [/^([A-Za-z_][\w-]*)\s*\[([\s\S]+)\]$/, "rectangle"],
+    [/^([A-Za-z_][\w-]*)\s*\(([\s\S]+)\)$/, "rounded"],
+    [/^([A-Za-z_][\w-]*)\s*\{([\s\S]+)\}$/, "diamond"],
+    [/^([A-Za-z_][\w-]*)\s*>([\s\S]+)\]$/, "asymmetric"],
   ];
 
   for (const [pattern, shape] of shapePatterns) {
@@ -324,6 +358,292 @@ function parseShapedNode(source: string): ParsedNodeReference | null {
   }
 
   return null;
+}
+
+function parseSubgraphDeclaration(
+  declaration: string,
+  lineNumber: number,
+): { sourceId: string; label: string } {
+  if (isQuoted(declaration)) {
+    const label = unquote(declaration);
+    return {
+      sourceId: normalizeScopedId(label),
+      label,
+    };
+  }
+
+  if (!hasNodeShapeSyntax(declaration) && !isValidSourceId(declaration)) {
+    return {
+      sourceId: normalizeScopedId(declaration),
+      label: declaration,
+    };
+  }
+
+  const parsed = parseNodeReference(declaration, lineNumber);
+
+  if (parsed.label) {
+    return {
+      sourceId: parsed.sourceId,
+      label: parsed.label,
+    };
+  }
+
+  if (isValidSourceId(parsed.sourceId)) {
+    return {
+      sourceId: parsed.sourceId,
+      label: parsed.sourceId,
+    };
+  }
+
+  const label = parsed.sourceId;
+  return {
+    sourceId: normalizeScopedId(label),
+    label,
+  };
+}
+
+function collectStatements(lines: string[], startIndex: number): MermaidStatement[] {
+  const statements: MermaidStatement[] = [];
+  let buffer = "";
+  let startLine = startIndex + 1;
+
+  for (let index = startIndex; index < lines.length; index += 1) {
+    const line = stripComment(lines[index]);
+
+    if (buffer.length === 0 && line.trim().length === 0) {
+      continue;
+    }
+
+    if (buffer.length === 0) {
+      startLine = index + 1;
+      buffer = line.trim();
+    } else {
+      buffer = `${buffer}\n${line.trimEnd()}`;
+    }
+
+    if (!isOpenStatement(buffer)) {
+      statements.push({
+        text: buffer.trim(),
+        lineNumber: startLine,
+      });
+      buffer = "";
+    }
+  }
+
+  if (buffer.trim().length > 0) {
+    statements.push({
+      text: buffer.trim(),
+      lineNumber: startLine,
+    });
+  }
+
+  return statements;
+}
+
+function splitEdgeStatement(statement: string): EdgeParts | null {
+  const marker = findTopLevelEdgeMarker(statement);
+
+  if (!marker) {
+    return null;
+  }
+
+  const left = statement.slice(0, marker.index).trim();
+  const rightWithLabel = statement.slice(marker.index + marker.value.length).trim();
+  const label = extractEdgeLabel(rightWithLabel);
+
+  if (!left || !label.right) {
+    return null;
+  }
+
+  return {
+    left,
+    marker: marker.value,
+    label: label.label,
+    right: label.right,
+  };
+}
+
+function findTopLevelEdgeMarker(statement: string): { index: number; value: string } | null {
+  const state = createScanState();
+
+  for (let index = 0; index < statement.length; index += 1) {
+    updateScanState(state, statement[index], statement[index - 1]);
+
+    if (!isTopLevel(state)) {
+      continue;
+    }
+
+    const rest = statement.slice(index);
+    const marker = ["-->", "---", "--", "==>", "==="].find((candidate) =>
+      rest.startsWith(candidate),
+    );
+
+    if (marker) {
+      return {
+        index,
+        value: marker,
+      };
+    }
+  }
+
+  return null;
+}
+
+function extractEdgeLabel(source: string): { label?: string; right: string } {
+  const trimmed = source.trim();
+
+  if (!trimmed.startsWith("|")) {
+    return {
+      right: trimmed,
+    };
+  }
+
+  const closingIndex = findClosingEdgeLabel(trimmed);
+
+  if (closingIndex === -1) {
+    return {
+      right: trimmed,
+    };
+  }
+
+  return {
+    label: trimmed.slice(1, closingIndex).trim(),
+    right: trimmed.slice(closingIndex + 1).trim(),
+  };
+}
+
+function findClosingEdgeLabel(source: string): number {
+  let quote: '"' | "'" | null = null;
+
+  for (let index = 1; index < source.length; index += 1) {
+    const character = source[index];
+    const previous = source[index - 1];
+
+    if ((character === '"' || character === "'") && previous !== "\\") {
+      quote = quote === character ? null : (quote ?? character);
+      continue;
+    }
+
+    if (character === "|" && !quote) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function splitNodeReferences(source: string, lineNumber: number): ParsedNodeReference[] {
+  const references = splitTopLevel(source, "&")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  if (references.length === 0) {
+    throw new MermaidParseError("Expected at least one node reference.", lineNumber);
+  }
+
+  return references.map((reference) => parseNodeReference(reference, lineNumber));
+}
+
+function splitTopLevel(source: string, separator: string): string[] {
+  const parts: string[] = [];
+  const state = createScanState();
+  let start = 0;
+
+  for (let index = 0; index < source.length; index += 1) {
+    updateScanState(state, source[index], source[index - 1]);
+
+    if (source[index] === separator && isTopLevel(state)) {
+      parts.push(source.slice(start, index));
+      start = index + 1;
+    }
+  }
+
+  parts.push(source.slice(start));
+  return parts;
+}
+
+function normalizeDirection(direction: string): DiagramDirection {
+  const normalized = direction.toUpperCase();
+  return normalized === "LR" ? "LR" : "TD";
+}
+
+function createScanState(): ScanState {
+  return {
+    quote: null,
+    squareDepth: 0,
+    parenDepth: 0,
+    braceDepth: 0,
+  };
+}
+
+function updateScanState(state: ScanState, character: string, previous: string | undefined): void {
+  if ((character === '"' || character === "'") && previous !== "\\") {
+    state.quote = state.quote === character ? null : (state.quote ?? character);
+    return;
+  }
+
+  if (state.quote) {
+    return;
+  }
+
+  if (character === "[") {
+    state.squareDepth += 1;
+    return;
+  }
+
+  if (character === "]") {
+    state.squareDepth = Math.max(0, state.squareDepth - 1);
+    return;
+  }
+
+  if (character === "(") {
+    state.parenDepth += 1;
+    return;
+  }
+
+  if (character === ")") {
+    state.parenDepth = Math.max(0, state.parenDepth - 1);
+    return;
+  }
+
+  if (character === "{") {
+    state.braceDepth += 1;
+    return;
+  }
+
+  if (character === "}") {
+    state.braceDepth = Math.max(0, state.braceDepth - 1);
+  }
+}
+
+function isTopLevel(state: ScanState): boolean {
+  return (
+    !state.quote && state.squareDepth === 0 && state.parenDepth === 0 && state.braceDepth === 0
+  );
+}
+
+function isOpenStatement(statement: string): boolean {
+  const state = createScanState();
+
+  for (let index = 0; index < statement.length; index += 1) {
+    updateScanState(state, statement[index], statement[index - 1]);
+  }
+
+  return !isTopLevel(state);
+}
+
+function stripComment(line: string): string {
+  const state = createScanState();
+
+  for (let index = 0; index < line.length; index += 1) {
+    updateScanState(state, line[index], line[index - 1]);
+
+    if (line[index] === "%" && line[index + 1] === "%" && isTopLevel(state)) {
+      return line.slice(0, index);
+    }
+  }
+
+  return line;
 }
 
 function parseStyleDeclaration(declaration: string): Record<string, string> {
@@ -389,11 +709,15 @@ function getCurrentSubgraphId(context: ParseContext): string | undefined {
 }
 
 function cleanLine(line: string): string {
-  return line.replace(/%%.*$/, "").trim();
+  return stripComment(line).trim();
 }
 
 function normalizeScopedId(sourceId: string): string {
-  return sourceId.trim().replace(/[^\w-]+/g, "_");
+  const normalized = sourceId
+    .trim()
+    .replace(/[^\w-]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized.length > 0 ? normalized : "item";
 }
 
 function createEdgeId(from: string, to: string, label: string | undefined, index: number): string {
@@ -405,12 +729,21 @@ function isValidSourceId(sourceId: string): boolean {
   return /^[A-Za-z_][\w-]*$/.test(sourceId);
 }
 
-function unquote(value: string): string {
+function hasNodeShapeSyntax(source: string): boolean {
+  return /^[A-Za-z_][\w-]*\s*(?:\(\(|\(\[|\[|\(|\{|>)/.test(source.trim());
+}
+
+function isQuoted(value: string): boolean {
   const trimmed = value.trim();
-  if (
+  return (
     (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
     (trimmed.startsWith("'") && trimmed.endsWith("'"))
-  ) {
+  );
+}
+
+function unquote(value: string): string {
+  const trimmed = value.trim();
+  if (isQuoted(trimmed)) {
     return trimmed.slice(1, -1);
   }
 
