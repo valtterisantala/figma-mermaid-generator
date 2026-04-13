@@ -32,9 +32,7 @@ type NodeBox = {
 };
 
 type EdgeGeometry = {
-  lineStart: Point;
-  lineEnd: Point;
-  arrowTip?: Point;
+  pathPoints: Point[];
   labelPosition: Point;
 };
 
@@ -46,8 +44,6 @@ const edgeLabelBackground: SolidPaint = {
   opacity: 0.92,
 };
 const edgeLabelFont: FontName = { family: "Inter", style: "Regular" };
-const arrowheadLength = 12;
-const arrowheadWidth = 10;
 
 export function renderEdges(context: EdgeRenderContext): void {
   for (const edge of context.diagram.edges) {
@@ -68,15 +64,9 @@ function createEdgeGroup(
   context: EdgeRenderContext,
 ): GroupNode {
   const edgeParts: SceneNode[] = [];
-  const path = createEdgePath(geometry.lineStart, geometry.lineEnd);
+  const path = createEdgePath(geometry.pathPoints, edge.kind);
   context.rootFrame.appendChild(path);
   edgeParts.push(path);
-
-  if (edge.kind === "arrow" && geometry.arrowTip) {
-    const arrowhead = createArrowhead(geometry.lineStart, geometry.arrowTip);
-    context.rootFrame.appendChild(arrowhead);
-    edgeParts.push(arrowhead);
-  }
 
   if (edge.label) {
     edgeParts.push(createEdgeLabel(edge.label, geometry.labelPosition, context));
@@ -88,50 +78,15 @@ function createEdgeGroup(
   return group;
 }
 
-function createEdgePath(start: Point, end: Point): VectorNode {
+function createEdgePath(points: Point[], edgeKind: DiagramEdge["kind"]): VectorNode {
   const path = figma.createVector();
   path.name = "Edge Path";
   path.fills = [];
   path.strokes = [edgeStroke];
   path.strokeWeight = 1.5;
-  path.vectorPaths = [
-    {
-      windingRule: "NONE",
-      data: `M ${round(start.x)} ${round(start.y)} L ${round(end.x)} ${round(end.y)}`,
-    },
-  ];
+  path.strokeCap = edgeKind === "arrow" ? "ARROW_LINES" : "NONE";
+  path.vectorNetwork = toVectorNetwork(points, edgeKind);
   return path;
-}
-
-function createArrowhead(start: Point, end: Point): VectorNode {
-  const angle = Math.atan2(end.y - start.y, end.x - start.x);
-  const back = {
-    x: end.x - Math.cos(angle) * arrowheadLength,
-    y: end.y - Math.sin(angle) * arrowheadLength,
-  };
-  const normal = {
-    x: Math.cos(angle + Math.PI / 2),
-    y: Math.sin(angle + Math.PI / 2),
-  };
-  const left = {
-    x: back.x + normal.x * (arrowheadWidth / 2),
-    y: back.y + normal.y * (arrowheadWidth / 2),
-  };
-  const right = {
-    x: back.x - normal.x * (arrowheadWidth / 2),
-    y: back.y - normal.y * (arrowheadWidth / 2),
-  };
-  const arrowhead = figma.createVector();
-  arrowhead.name = "Edge Arrowhead";
-  arrowhead.fills = [edgeStroke];
-  arrowhead.strokes = [];
-  arrowhead.vectorPaths = [
-    {
-      windingRule: "NONZERO",
-      data: `M ${round(end.x)} ${round(end.y)} L ${round(left.x)} ${round(left.y)} L ${round(right.x)} ${round(right.y)} Z`,
-    },
-  ];
-  return arrowhead;
 }
 
 function createEdgeLabel(label: string, position: Point, context: EdgeRenderContext): GroupNode {
@@ -186,34 +141,29 @@ function getEdgeGeometry(
   const endOrigin = routePoints[routePoints.length - 1] ?? fromCenter;
   const start = getBoundaryPoint(from, startTarget);
   const end = getBoundaryPoint(to, endOrigin);
-  const lineEnd = edge.kind === "arrow" ? retreatPoint(end, start, arrowheadLength * 0.72) : end;
+  const pathPoints = normalizePathPoints([start, ...routePoints.slice(1, -1), end]);
 
   return {
-    lineStart: start,
-    lineEnd,
-    arrowTip: edge.kind === "arrow" ? end : undefined,
-    labelPosition: getLabelPosition(layoutEdge, { start, end }, context),
+    pathPoints,
+    labelPosition: getLabelPosition(layoutEdge, pathPoints, context),
   };
 }
 
 function getLabelPosition(
   layoutEdge: DiagramLayoutEdge,
-  endpoints: { start: Point; end: Point },
+  pathPoints: Point[],
   context: EdgeRenderContext,
 ): Point {
-  const midpoint = {
-    x: round((endpoints.start.x + endpoints.end.x) / 2),
-    y: round((endpoints.start.y + endpoints.end.y) / 2),
-  };
+  const midpoint = getPathMidpoint(pathPoints);
 
   if (!layoutEdge.labelPosition) {
-    return offsetLabelFromLine(midpoint, endpoints);
+    return offsetLabelFromPath(midpoint, pathPoints);
   }
 
   const candidate = toRootPoint(layoutEdge.labelPosition, context);
 
   if (isPointInsideAnyNode(candidate, context)) {
-    return offsetLabelFromLine(midpoint, endpoints);
+    return offsetLabelFromPath(midpoint, pathPoints);
   }
 
   return candidate;
@@ -313,24 +263,10 @@ function getDiamondBoundaryPoint(box: NodeBox, dx: number, dy: number): Point {
   };
 }
 
-function retreatPoint(point: Point, awayFrom: Point, distance: number): Point {
-  const dx = point.x - awayFrom.x;
-  const dy = point.y - awayFrom.y;
-  const length = Math.hypot(dx, dy);
-
-  if (length <= distance || length < 0.001) {
-    return point;
-  }
-
-  return {
-    x: round(point.x - (dx / length) * distance),
-    y: round(point.y - (dy / length) * distance),
-  };
-}
-
-function offsetLabelFromLine(position: Point, endpoints: { start: Point; end: Point }): Point {
-  const dx = endpoints.end.x - endpoints.start.x;
-  const dy = endpoints.end.y - endpoints.start.y;
+function offsetLabelFromPath(position: Point, pathPoints: Point[]): Point {
+  const [start, end] = getLabelSegment(pathPoints);
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
   const length = Math.hypot(dx, dy);
 
   if (length < 0.001) {
@@ -342,6 +278,88 @@ function offsetLabelFromLine(position: Point, endpoints: { start: Point; end: Po
   return {
     x: round(position.x + (-dy / length) * offset),
     y: round(position.y + (dx / length) * offset),
+  };
+}
+
+function getLabelSegment(pathPoints: Point[]): [Point, Point] {
+  if (pathPoints.length < 2) {
+    const point = pathPoints[0] ?? { x: 0, y: 0 };
+    return [point, point];
+  }
+
+  const middleIndex = Math.max(0, Math.floor((pathPoints.length - 1) / 2));
+  return [pathPoints[middleIndex], pathPoints[middleIndex + 1] ?? pathPoints[middleIndex]];
+}
+
+function getPathMidpoint(pathPoints: Point[]): Point {
+  if (pathPoints.length === 0) {
+    return { x: 0, y: 0 };
+  }
+
+  if (pathPoints.length === 1) {
+    return pathPoints[0];
+  }
+
+  const segments = [];
+  let totalLength = 0;
+
+  for (let index = 0; index < pathPoints.length - 1; index += 1) {
+    const start = pathPoints[index];
+    const end = pathPoints[index + 1];
+    const length = Math.hypot(end.x - start.x, end.y - start.y);
+    totalLength += length;
+    segments.push({ start, end, length });
+  }
+
+  let remaining = totalLength / 2;
+
+  for (const segment of segments) {
+    if (remaining > segment.length) {
+      remaining -= segment.length;
+      continue;
+    }
+
+    const ratio = segment.length < 0.001 ? 0 : remaining / segment.length;
+    return {
+      x: round(segment.start.x + (segment.end.x - segment.start.x) * ratio),
+      y: round(segment.start.y + (segment.end.y - segment.start.y) * ratio),
+    };
+  }
+
+  return pathPoints[pathPoints.length - 1];
+}
+
+function normalizePathPoints(points: Point[]): Point[] {
+  return points.reduce<Point[]>((normalized, point) => {
+    const previous = normalized[normalized.length - 1];
+
+    if (previous && Math.hypot(previous.x - point.x, previous.y - point.y) < 0.5) {
+      return normalized;
+    }
+
+    normalized.push({
+      x: round(point.x),
+      y: round(point.y),
+    });
+    return normalized;
+  }, []);
+}
+
+function toVectorNetwork(points: Point[], edgeKind: DiagramEdge["kind"]): VectorNetwork {
+  const normalizedPoints = points.length > 0 ? points : [{ x: 0, y: 0 }];
+  const lastIndex = normalizedPoints.length - 1;
+
+  return {
+    vertices: normalizedPoints.map((point, index) => ({
+      x: round(point.x),
+      y: round(point.y),
+      strokeCap: edgeKind === "arrow" && index === lastIndex ? "ARROW_LINES" : "NONE",
+    })),
+    segments: normalizedPoints.slice(0, -1).map((_point, index) => ({
+      start: index,
+      end: index + 1,
+    })),
+    regions: [],
   };
 }
 
