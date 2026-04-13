@@ -10,7 +10,7 @@ Create the base Figma plugin repo and development setup.
 - add `package.json`
 - add TypeScript config
 - add build setup
-- add linting/formatting
+- add linting and formatting
 - add base folder structure for:
   - `main`
   - `ui`
@@ -29,5 +29,14 @@ src/
   ui/
   core/
   fixtures/
-  test/
+  tests/
 docs/
+```
+
+## Definition of done
+
+- plugin repo can be installed and built locally
+- manifest is valid for a Figma plugin
+- TypeScript compiles cleanly
+- development folder structure is in place
+- README explains local setup

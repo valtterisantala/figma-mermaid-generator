@@ -1,8 +1,3 @@
----
-
-# `docs/issues/02-plugin-ui-for-mermaid-input.md`
-
-```md
 # Issue 02 — Build plugin UI for Mermaid input and render actions
 
 ## Purpose
@@ -17,7 +12,7 @@ Create the first usable plugin UI.
 - add Replace Previous toggle
 - add direction override setting
 - add spacing preset setting
-- add status / error area
+- add status and error area
 - wire UI ↔ plugin main thread messaging
 
 ## UX notes
@@ -33,7 +28,7 @@ The main thing is fast iteration:
 
 - user can paste Mermaid text into the UI
 - clicking Render sends payload to main plugin code
-- validation/render errors are shown clearly
+- validation and render errors are shown clearly
 - UI is usable enough for development testing
 
 ## Dependencies
