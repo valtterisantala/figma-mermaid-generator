@@ -58,13 +58,15 @@ p {
 
 textarea,
 select,
+input,
 button {
   border-radius: 6px;
   font: inherit;
 }
 
 textarea,
-select {
+select,
+input[type="number"] {
   width: 100%;
   border: 1px solid var(--figma-color-border, #d9d9d9);
   background: var(--figma-color-bg, #ffffff);
@@ -81,6 +83,11 @@ textarea {
 }
 
 select {
+  height: 32px;
+  padding: 0 8px;
+}
+
+input[type="number"] {
   height: 32px;
   padding: 0 8px;
 }

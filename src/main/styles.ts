@@ -7,6 +7,10 @@ export type ResolvedNodeStyle = {
   strokeWeight: number;
 };
 
+export type NodeStyleDefaults = {
+  strokeWeight: number;
+};
+
 const defaultNodeStyle: ResolvedNodeStyle = {
   fill: { type: "SOLID", color: { r: 1, g: 1, b: 1 } },
   stroke: { type: "SOLID", color: { r: 0.28, g: 0.32, b: 0.38 } },
@@ -14,18 +18,27 @@ const defaultNodeStyle: ResolvedNodeStyle = {
   strokeWeight: 1,
 };
 
-export function resolveNodeStyle(diagram: DiagramModel, node: DiagramNode): ResolvedNodeStyle {
+export function resolveNodeStyle(
+  diagram: DiagramModel,
+  node: DiagramNode,
+  defaults: NodeStyleDefaults = {
+    strokeWeight: defaultNodeStyle.strokeWeight,
+  },
+): ResolvedNodeStyle {
   const stylesById = new Map(diagram.styles.map((style) => [style.id, style]));
 
-  return node.classIds.reduce<ResolvedNodeStyle>((resolvedStyle, classId) => {
-    const style = stylesById.get(classId);
+  return node.classIds.reduce<ResolvedNodeStyle>(
+    (resolvedStyle, classId) => {
+      const style = stylesById.get(classId);
 
-    if (!style) {
-      return resolvedStyle;
-    }
+      if (!style) {
+        return resolvedStyle;
+      }
 
-    return applyDiagramStyle(resolvedStyle, style);
-  }, cloneNodeStyle(defaultNodeStyle));
+      return applyDiagramStyle(resolvedStyle, style);
+    },
+    { ...cloneNodeStyle(defaultNodeStyle), strokeWeight: defaults.strokeWeight },
+  );
 }
 
 function applyDiagramStyle(baseStyle: ResolvedNodeStyle, style: DiagramStyle): ResolvedNodeStyle {

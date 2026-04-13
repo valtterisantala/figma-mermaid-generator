@@ -7,6 +7,7 @@ import type {
   DiagramNode,
 } from "../core";
 import { setEdgeMetadata } from "./metadata";
+import type { RenderSettings } from "./render";
 
 type EdgeRenderContext = {
   diagram: DiagramModel;
@@ -15,6 +16,7 @@ type EdgeRenderContext = {
   rootFrame: FrameNode;
   originX: number;
   originY: number;
+  settings: RenderSettings;
 };
 
 type Point = {
@@ -43,7 +45,6 @@ const edgeLabelBackground: SolidPaint = {
   color: { r: 0.96, g: 0.97, b: 0.98 },
   opacity: 0.92,
 };
-const edgeLabelFont: FontName = { family: "Inter", style: "Regular" };
 const subgraphTitleHeight = 28;
 
 export function renderEdges(context: EdgeRenderContext): void {
@@ -65,7 +66,7 @@ function createEdgeGroup(
   context: EdgeRenderContext,
 ): GroupNode {
   const edgeParts: SceneNode[] = [];
-  const path = createEdgePath(geometry.pathPoints, edge.kind);
+  const path = createEdgePath(geometry.pathPoints, edge.kind, context);
   context.rootFrame.appendChild(path);
   edgeParts.push(path);
 
@@ -79,12 +80,16 @@ function createEdgeGroup(
   return group;
 }
 
-function createEdgePath(points: Point[], edgeKind: DiagramEdge["kind"]): VectorNode {
+function createEdgePath(
+  points: Point[],
+  edgeKind: DiagramEdge["kind"],
+  context: EdgeRenderContext,
+): VectorNode {
   const path = figma.createVector();
   path.name = "Edge Path";
   path.fills = [];
   path.strokes = [edgeStroke];
-  path.strokeWeight = 1.5;
+  path.strokeWeight = context.settings.strokeWidth;
   path.strokeCap = edgeKind === "arrow" ? "ARROW_LINES" : "NONE";
   path.vectorNetwork = toVectorNetwork(points, edgeKind);
   return path;
@@ -93,15 +98,15 @@ function createEdgePath(points: Point[], edgeKind: DiagramEdge["kind"]): VectorN
 function createEdgeLabel(label: string, position: Point, context: EdgeRenderContext): GroupNode {
   const text = figma.createText();
   text.name = "Edge Label Text";
-  text.fontName = edgeLabelFont;
-  text.fontSize = 12;
+  text.fontName = context.settings.fontName;
+  text.fontSize = context.settings.fontSize;
   text.fills = [edgeLabelFill];
   text.characters = label;
   text.textAlignHorizontal = "CENTER";
   text.textAlignVertical = "CENTER";
 
-  const width = Math.max(36, Math.ceil(label.length * 7) + 16);
-  const height = 22;
+  const width = Math.max(36, Math.ceil(label.length * context.settings.fontSize * 0.58) + 16);
+  const height = Math.max(22, context.settings.fontSize + 10);
   text.resizeWithoutConstraints(width, height);
   text.x = position.x - width / 2;
   text.y = position.y - height / 2;

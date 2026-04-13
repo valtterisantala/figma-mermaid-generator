@@ -24,12 +24,25 @@ type RenderContext = {
   rootFrame: FrameNode;
   originX: number;
   originY: number;
+  settings: RenderSettings;
   subgraphFrames: Map<string, FrameNode>;
+};
+
+export type RenderSettings = {
+  fontName: FontName;
+  fontSize: number;
+  strokeWidth: number;
+  cornerRadius: number;
 };
 
 const rootPadding = 48;
 const subgraphTitleHeight = 28;
-const labelFont: FontName = { family: "Inter", style: "Regular" };
+export const defaultRenderSettings: RenderSettings = {
+  fontName: { family: "FK Grotesk Neue Trial", style: "Regular" },
+  fontSize: 13,
+  strokeWidth: 1,
+  cornerRadius: 8,
+};
 const rootFill: SolidPaint = { type: "SOLID", color: { r: 0.96, g: 0.97, b: 0.98 } };
 const subgraphFill: SolidPaint = {
   type: "SOLID",
@@ -45,9 +58,11 @@ export async function renderNativeNodes(
   options: {
     instanceId: string;
     placement?: RenderPlacement;
+    settings?: Partial<RenderSettings>;
   },
 ): Promise<FrameNode> {
-  await figma.loadFontAsync(labelFont);
+  const settings = resolveRenderSettings(options.settings);
+  await figma.loadFontAsync(settings.fontName);
 
   const bounds = getRenderBounds(layout);
   const rootFrame = createRootFrame(diagram, bounds, options.placement);
@@ -59,6 +74,7 @@ export async function renderNativeNodes(
     rootFrame,
     originX: bounds.minX - rootPadding,
     originY: bounds.minY - rootPadding,
+    settings,
     subgraphFrames: new Map(),
   };
 
@@ -116,8 +132,8 @@ function renderSubgraphs(context: RenderContext): void {
     setSubgraphMetadata(frame, subgraph, context.instanceId);
     frame.fills = [subgraphFill];
     frame.strokes = [subgraphStroke];
-    frame.strokeWeight = 1;
-    frame.cornerRadius = 8;
+    frame.strokeWeight = context.settings.strokeWidth;
+    frame.cornerRadius = context.settings.cornerRadius;
     frame.clipsContent = false;
     frame.x = layoutSubgraph.x - context.originX;
     frame.y = layoutSubgraph.y - context.originY;
@@ -126,7 +142,7 @@ function renderSubgraphs(context: RenderContext): void {
       layoutSubgraph.height + subgraphTitleHeight,
     );
 
-    const title = createTextLayer("Subgraph Title", subgraph.label, 13);
+    const title = createTextLayer("Subgraph Title", subgraph.label, context);
     title.x = 12;
     title.y = 8;
     title.resizeWithoutConstraints(Math.max(1, layoutSubgraph.width - 24), 18);
@@ -150,21 +166,13 @@ function renderNodes(context: RenderContext): void {
         layoutNode,
         context.rootFrame,
         getRootNodePosition(layoutNode, context),
-        context.instanceId,
-        context.diagram,
+        context,
       );
       continue;
     }
 
     if (parent === context.rootFrame) {
-      createNodeGroup(
-        node,
-        layoutNode,
-        parent,
-        getRootNodePosition(layoutNode, context),
-        context.instanceId,
-        context.diagram,
-      );
+      createNodeGroup(node, layoutNode, parent, getRootNodePosition(layoutNode, context), context);
       continue;
     }
 
@@ -177,8 +185,7 @@ function renderNodes(context: RenderContext): void {
         x: layoutNode.x - subgraphLayout.x,
         y: layoutNode.y - subgraphLayout.y + subgraphTitleHeight,
       },
-      context.instanceId,
-      context.diagram,
+      context,
     );
   }
 }
@@ -188,16 +195,17 @@ function createNodeGroup(
   layoutNode: DiagramLayoutNode,
   parent: FrameNode,
   position: { x: number; y: number },
-  instanceId: string,
-  diagram: DiagramModel,
+  context: RenderContext,
 ): GroupNode {
-  const style = resolveNodeStyle(diagram, node);
-  const shape = createNodeShape(node.shape, layoutNode, style);
+  const style = resolveNodeStyle(context.diagram, node, {
+    strokeWeight: context.settings.strokeWidth,
+  });
+  const shape = createNodeShape(node.shape, layoutNode, style, context.settings);
   shape.x = position.x;
   shape.y = position.y;
   parent.appendChild(shape);
 
-  const label = createTextLayer("Node Label", node.label, 13);
+  const label = createTextLayer("Node Label", node.label, context);
   label.textAlignHorizontal = "CENTER";
   label.textAlignVertical = "CENTER";
   label.fills = [style.textFill];
@@ -208,7 +216,7 @@ function createNodeGroup(
 
   const group = figma.group([shape, label], parent);
   group.name = `Node / ${node.id}`;
-  setNodeMetadata(group, node, instanceId);
+  setNodeMetadata(group, node, context.instanceId);
   return group;
 }
 
@@ -216,6 +224,7 @@ function createNodeShape(
   shape: NodeShape,
   layoutNode: DiagramLayoutNode,
   style: ResolvedNodeStyle,
+  settings: RenderSettings,
 ): SceneNode {
   const nodeShape = createRawShape(shape, layoutNode);
   nodeShape.name = "Node Shape";
@@ -227,7 +236,7 @@ function createNodeShape(
   nodeShape.resizeWithoutConstraints(layoutNode.width, layoutNode.height);
 
   if ("cornerRadius" in nodeShape) {
-    nodeShape.cornerRadius = getCornerRadius(shape, layoutNode);
+    nodeShape.cornerRadius = getCornerRadius(shape, layoutNode, settings.cornerRadius);
   }
 
   return nodeShape;
@@ -262,26 +271,43 @@ function createRawShape(
   return figma.createRectangle();
 }
 
-function getCornerRadius(shape: NodeShape, layoutNode: DiagramLayoutNode): number {
+function getCornerRadius(
+  shape: NodeShape,
+  layoutNode: DiagramLayoutNode,
+  cornerRadius: number,
+): number {
   if (shape === "rounded") {
-    return 8;
+    return cornerRadius;
   }
 
   if (shape === "stadium") {
     return layoutNode.height / 2;
   }
 
+  if (shape === "rectangle") {
+    return cornerRadius;
+  }
+
   return 0;
 }
 
-function createTextLayer(name: string, characters: string, fontSize: number): TextNode {
+function createTextLayer(name: string, characters: string, context: RenderContext): TextNode {
   const text = figma.createText();
   text.name = name;
-  text.fontName = labelFont;
-  text.fontSize = fontSize;
+  text.fontName = context.settings.fontName;
+  text.fontSize = context.settings.fontSize;
   text.fills = [textFill];
   text.characters = characters;
   return text;
+}
+
+function resolveRenderSettings(settings: Partial<RenderSettings> | undefined): RenderSettings {
+  return {
+    fontName: settings?.fontName ?? defaultRenderSettings.fontName,
+    fontSize: settings?.fontSize ?? defaultRenderSettings.fontSize,
+    strokeWidth: settings?.strokeWidth ?? defaultRenderSettings.strokeWidth,
+    cornerRadius: settings?.cornerRadius ?? defaultRenderSettings.cornerRadius,
+  };
 }
 
 function getRootNodePosition(

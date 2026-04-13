@@ -70,6 +70,7 @@ Supported:
 - edges to and from known subgraph ids
 - `classDef` and `class` for node styling
 - style mapping for `fill`, `stroke`, `color`, and `stroke-width`
+- per-render defaults for font family, font style, font size, stroke width, and corner radius
 - Render New and Replace Previous
 - native Figma output with editable text and shapes
 

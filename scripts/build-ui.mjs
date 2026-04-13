@@ -61,6 +61,44 @@ ${css}
         </label>
       </div>
 
+      <div class="controls">
+        <label class="field">
+          <span>Font family</span>
+          <select id="font-family-select">
+            <option value="FK Grotesk Neue Trial">FK Grotesk Neue Trial</option>
+            <option value="Inter">Inter</option>
+            <option value="Arial">Arial</option>
+            <option value="Roboto">Roboto</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Font style</span>
+          <select id="font-style-select">
+            <option value="Regular">Regular</option>
+            <option value="Medium">Medium</option>
+            <option value="Bold">Bold</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="controls">
+        <label class="field">
+          <span>Font size</span>
+          <input id="font-size-input" type="number" min="8" max="24" step="1" value="13" />
+        </label>
+
+        <label class="field">
+          <span>Stroke width</span>
+          <input id="stroke-width-input" type="number" min="0.5" max="12" step="0.5" value="1" />
+        </label>
+      </div>
+
+      <label class="field">
+        <span>Corner radius</span>
+        <input id="corner-radius-input" type="number" min="0" max="32" step="1" value="8" />
+      </label>
+
       <label class="toggle">
         <input id="replace-previous" type="checkbox" checked />
         <span>Replace previous</span>
