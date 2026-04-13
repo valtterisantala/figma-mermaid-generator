@@ -4,8 +4,8 @@ import type {
   DiagramLayoutNode,
   DiagramLayoutResult,
   DiagramModel,
-  DiagramNode,
 } from "../core";
+import { buildOrthogonalPath, type NodeBox, type Point } from "./edge-routing";
 import { estimateMultilineTextBox } from "./label-text";
 import { setEdgeMetadata } from "./metadata";
 import type { RenderSettings } from "./render";
@@ -21,20 +21,6 @@ type EdgeRenderContext = {
   settings: RenderSettings;
   boldFontName: FontName;
   subgraphTitleHeights: Map<string, number>;
-};
-
-type Point = {
-  x: number;
-  y: number;
-};
-
-type NodeBox = {
-  id: string;
-  shape: DiagramNode["shape"];
-  x: number;
-  y: number;
-  width: number;
-  height: number;
 };
 
 type EdgeGeometry = {
@@ -155,13 +141,7 @@ function getEdgeGeometry(
   }
 
   const routePoints = layoutEdge.points.map((point) => toRootPoint(point, context));
-  const fromCenter = getCenter(from);
-  const toCenter = getCenter(to);
-  const startTarget = routePoints[0] ?? toCenter;
-  const endOrigin = routePoints[routePoints.length - 1] ?? fromCenter;
-  const start = getBoundaryPoint(from, startTarget);
-  const end = getBoundaryPoint(to, endOrigin);
-  const pathPoints = normalizePathPoints([start, ...routePoints.slice(1, -1), end]);
+  const pathPoints = buildOrthogonalPath(from, to, routePoints);
 
   return {
     pathPoints,
@@ -237,65 +217,6 @@ function getNodeBox(id: string, context: EdgeRenderContext): NodeBox | null {
   };
 }
 
-function getBoundaryPoint(box: NodeBox, toward: Point): Point {
-  const center = getCenter(box);
-  const dx = toward.x - center.x;
-  const dy = toward.y - center.y;
-
-  if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) {
-    return center;
-  }
-
-  if (box.shape === "circle") {
-    return getEllipseBoundaryPoint(box, dx, dy);
-  }
-
-  if (box.shape === "diamond") {
-    return getDiamondBoundaryPoint(box, dx, dy);
-  }
-
-  return getRectangleBoundaryPoint(box, dx, dy);
-}
-
-function getRectangleBoundaryPoint(box: NodeBox, dx: number, dy: number): Point {
-  const center = getCenter(box);
-  const halfWidth = box.width / 2;
-  const halfHeight = box.height / 2;
-  const scale = Math.min(
-    Math.abs(dx) > 0.001 ? halfWidth / Math.abs(dx) : Number.POSITIVE_INFINITY,
-    Math.abs(dy) > 0.001 ? halfHeight / Math.abs(dy) : Number.POSITIVE_INFINITY,
-  );
-
-  return {
-    x: round(center.x + dx * scale),
-    y: round(center.y + dy * scale),
-  };
-}
-
-function getEllipseBoundaryPoint(box: NodeBox, dx: number, dy: number): Point {
-  const center = getCenter(box);
-  const radiusX = box.width / 2;
-  const radiusY = box.height / 2;
-  const scale = 1 / Math.sqrt((dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY));
-
-  return {
-    x: round(center.x + dx * scale),
-    y: round(center.y + dy * scale),
-  };
-}
-
-function getDiamondBoundaryPoint(box: NodeBox, dx: number, dy: number): Point {
-  const center = getCenter(box);
-  const halfWidth = box.width / 2;
-  const halfHeight = box.height / 2;
-  const scale = 1 / (Math.abs(dx) / halfWidth + Math.abs(dy) / halfHeight);
-
-  return {
-    x: round(center.x + dx * scale),
-    y: round(center.y + dy * scale),
-  };
-}
-
 function offsetLabelFromPath(position: Point, pathPoints: Point[]): Point {
   const [start, end] = getLabelSegment(pathPoints);
   const dx = end.x - start.x;
@@ -362,22 +283,6 @@ function getPathMidpoint(pathPoints: Point[]): Point {
   return pathPoints[pathPoints.length - 1];
 }
 
-function normalizePathPoints(points: Point[]): Point[] {
-  return points.reduce<Point[]>((normalized, point) => {
-    const previous = normalized[normalized.length - 1];
-
-    if (previous && Math.hypot(previous.x - point.x, previous.y - point.y) < 0.5) {
-      return normalized;
-    }
-
-    normalized.push({
-      x: round(point.x),
-      y: round(point.y),
-    });
-    return normalized;
-  }, []);
-}
-
 function toVectorNetwork(points: Point[], edgeKind: DiagramEdge["kind"]): VectorNetwork {
   const normalizedPoints = points.length > 0 ? points : [{ x: 0, y: 0 }];
   const lastIndex = normalizedPoints.length - 1;
@@ -418,13 +323,6 @@ function toRootNodeBox(node: DiagramLayoutNode, context: EdgeRenderContext): Nod
     y: node.y - context.originY,
     width: node.width,
     height: node.height,
-  };
-}
-
-function getCenter(box: NodeBox): Point {
-  return {
-    x: box.x + box.width / 2,
-    y: box.y + box.height / 2,
   };
 }
 
