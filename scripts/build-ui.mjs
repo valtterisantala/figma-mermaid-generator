@@ -66,6 +66,7 @@ ${css}
           <span>Font family</span>
           <select id="font-family-select">
             <option value="FK Grotesk Neue Trial">FK Grotesk Neue Trial</option>
+            <option value="Aptos">Aptos</option>
             <option value="Inter">Inter</option>
             <option value="Arial">Arial</option>
             <option value="Roboto">Roboto</option>
