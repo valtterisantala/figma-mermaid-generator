@@ -8,6 +8,7 @@ import type {
 import { setDiagramRootMetadata, setNodeMetadata, setSubgraphMetadata } from "./metadata";
 import { renderEdges } from "./render-edges";
 import type { RenderPlacement } from "./rerender";
+import { resolveNodeStyle, type ResolvedNodeStyle } from "./styles";
 
 type RenderBounds = {
   minX: number;
@@ -30,13 +31,11 @@ const rootPadding = 48;
 const subgraphTitleHeight = 28;
 const labelFont: FontName = { family: "Inter", style: "Regular" };
 const rootFill: SolidPaint = { type: "SOLID", color: { r: 0.96, g: 0.97, b: 0.98 } };
-const nodeFill: SolidPaint = { type: "SOLID", color: { r: 1, g: 1, b: 1 } };
 const subgraphFill: SolidPaint = {
   type: "SOLID",
   color: { r: 0.93, g: 0.96, b: 1 },
   opacity: 0.45,
 };
-const nodeStroke: SolidPaint = { type: "SOLID", color: { r: 0.28, g: 0.32, b: 0.38 } };
 const subgraphStroke: SolidPaint = { type: "SOLID", color: { r: 0.46, g: 0.58, b: 0.72 } };
 const textFill: SolidPaint = { type: "SOLID", color: { r: 0.1, g: 0.11, b: 0.13 } };
 
@@ -152,6 +151,7 @@ function renderNodes(context: RenderContext): void {
         context.rootFrame,
         getRootNodePosition(layoutNode, context),
         context.instanceId,
+        context.diagram,
       );
       continue;
     }
@@ -163,6 +163,7 @@ function renderNodes(context: RenderContext): void {
         parent,
         getRootNodePosition(layoutNode, context),
         context.instanceId,
+        context.diagram,
       );
       continue;
     }
@@ -177,6 +178,7 @@ function renderNodes(context: RenderContext): void {
         y: layoutNode.y - subgraphLayout.y + subgraphTitleHeight,
       },
       context.instanceId,
+      context.diagram,
     );
   }
 }
@@ -187,8 +189,10 @@ function createNodeGroup(
   parent: FrameNode,
   position: { x: number; y: number },
   instanceId: string,
+  diagram: DiagramModel,
 ): GroupNode {
-  const shape = createNodeShape(node.shape, layoutNode);
+  const style = resolveNodeStyle(diagram, node);
+  const shape = createNodeShape(node.shape, layoutNode, style);
   shape.x = position.x;
   shape.y = position.y;
   parent.appendChild(shape);
@@ -196,6 +200,7 @@ function createNodeGroup(
   const label = createTextLayer("Node Label", node.label, 13);
   label.textAlignHorizontal = "CENTER";
   label.textAlignVertical = "CENTER";
+  label.fills = [style.textFill];
   label.x = position.x + 8;
   label.y = position.y;
   label.resizeWithoutConstraints(Math.max(1, layoutNode.width - 16), layoutNode.height);
@@ -207,12 +212,16 @@ function createNodeGroup(
   return group;
 }
 
-function createNodeShape(shape: NodeShape, layoutNode: DiagramLayoutNode): SceneNode {
+function createNodeShape(
+  shape: NodeShape,
+  layoutNode: DiagramLayoutNode,
+  style: ResolvedNodeStyle,
+): SceneNode {
   const nodeShape = createRawShape(shape, layoutNode);
   nodeShape.name = "Node Shape";
-  nodeShape.fills = [nodeFill];
-  nodeShape.strokes = [nodeStroke];
-  nodeShape.strokeWeight = 1;
+  nodeShape.fills = [style.fill];
+  nodeShape.strokes = [style.stroke];
+  nodeShape.strokeWeight = style.strokeWeight;
   nodeShape.x = 0;
   nodeShape.y = 0;
   nodeShape.resizeWithoutConstraints(layoutNode.width, layoutNode.height);

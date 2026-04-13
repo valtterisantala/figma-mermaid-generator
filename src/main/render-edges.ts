@@ -1,4 +1,11 @@
-import type { DiagramEdge, DiagramLayoutEdge, DiagramLayoutResult, DiagramModel } from "../core";
+import type {
+  DiagramEdge,
+  DiagramLayoutEdge,
+  DiagramLayoutNode,
+  DiagramLayoutResult,
+  DiagramModel,
+  DiagramNode,
+} from "../core";
 import { setEdgeMetadata } from "./metadata";
 
 type EdgeRenderContext = {
@@ -15,6 +22,22 @@ type Point = {
   y: number;
 };
 
+type NodeBox = {
+  id: string;
+  shape: DiagramNode["shape"];
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type EdgeGeometry = {
+  lineStart: Point;
+  lineEnd: Point;
+  arrowTip?: Point;
+  labelPosition: Point;
+};
+
 const edgeStroke: SolidPaint = { type: "SOLID", color: { r: 0.28, g: 0.32, b: 0.38 } };
 const edgeLabelFill: SolidPaint = { type: "SOLID", color: { r: 0.1, g: 0.11, b: 0.13 } };
 const edgeLabelBackground: SolidPaint = {
@@ -29,37 +52,34 @@ const arrowheadWidth = 10;
 export function renderEdges(context: EdgeRenderContext): void {
   for (const edge of context.diagram.edges) {
     const layoutEdge = getLayoutEdge(edge.id, context.layout);
-    const endpoints = getEdgeEndpoints(edge, layoutEdge, context);
+    const geometry = getEdgeGeometry(edge, layoutEdge, context);
 
-    if (!endpoints) {
+    if (!geometry) {
       continue;
     }
 
-    createEdgeGroup(edge, layoutEdge, endpoints, context);
+    createEdgeGroup(edge, geometry, context);
   }
 }
 
 function createEdgeGroup(
   edge: DiagramEdge,
-  layoutEdge: DiagramLayoutEdge,
-  endpoints: { start: Point; end: Point },
+  geometry: EdgeGeometry,
   context: EdgeRenderContext,
 ): GroupNode {
   const edgeParts: SceneNode[] = [];
-  const path = createEdgePath(endpoints.start, endpoints.end);
+  const path = createEdgePath(geometry.lineStart, geometry.lineEnd);
   context.rootFrame.appendChild(path);
   edgeParts.push(path);
 
-  if (edge.kind === "arrow") {
-    const arrowhead = createArrowhead(endpoints.start, endpoints.end);
+  if (edge.kind === "arrow" && geometry.arrowTip) {
+    const arrowhead = createArrowhead(geometry.lineStart, geometry.arrowTip);
     context.rootFrame.appendChild(arrowhead);
     edgeParts.push(arrowhead);
   }
 
   if (edge.label) {
-    edgeParts.push(
-      createEdgeLabel(edge.label, getLabelPosition(layoutEdge, endpoints, context), context),
-    );
+    edgeParts.push(createEdgeLabel(edge.label, geometry.labelPosition, context));
   }
 
   const group = figma.group(edgeParts, context.rootFrame);
@@ -147,30 +167,32 @@ function createEdgeLabel(label: string, position: Point, context: EdgeRenderCont
   return group;
 }
 
-function getEdgeEndpoints(
+function getEdgeGeometry(
   edge: DiagramEdge,
   layoutEdge: DiagramLayoutEdge,
   context: EdgeRenderContext,
-): { start: Point; end: Point } | null {
-  const points = layoutEdge.points.map((point) => toRootPoint(point, context));
-
-  if (points.length >= 2) {
-    return {
-      start: points[0],
-      end: points[points.length - 1],
-    };
-  }
-
-  const from = context.layout.nodes.find((node) => node.id === edge.from);
-  const to = context.layout.nodes.find((node) => node.id === edge.to);
+): EdgeGeometry | null {
+  const from = getNodeBox(edge.from, context);
+  const to = getNodeBox(edge.to, context);
 
   if (!from || !to) {
     return null;
   }
 
+  const routePoints = layoutEdge.points.map((point) => toRootPoint(point, context));
+  const fromCenter = getCenter(from);
+  const toCenter = getCenter(to);
+  const startTarget = routePoints[0] ?? toCenter;
+  const endOrigin = routePoints[routePoints.length - 1] ?? fromCenter;
+  const start = getBoundaryPoint(from, startTarget);
+  const end = getBoundaryPoint(to, endOrigin);
+  const lineEnd = edge.kind === "arrow" ? retreatPoint(end, start, arrowheadLength * 0.72) : end;
+
   return {
-    start: toRootPoint({ x: from.x + from.width / 2, y: from.y + from.height / 2 }, context),
-    end: toRootPoint({ x: to.x + to.width / 2, y: to.y + to.height / 2 }, context),
+    lineStart: start,
+    lineEnd,
+    arrowTip: edge.kind === "arrow" ? end : undefined,
+    labelPosition: getLabelPosition(layoutEdge, { start, end }, context),
   };
 }
 
@@ -179,14 +201,22 @@ function getLabelPosition(
   endpoints: { start: Point; end: Point },
   context: EdgeRenderContext,
 ): Point {
-  if (layoutEdge.labelPosition) {
-    return toRootPoint(layoutEdge.labelPosition, context);
-  }
-
-  return {
+  const midpoint = {
     x: round((endpoints.start.x + endpoints.end.x) / 2),
     y: round((endpoints.start.y + endpoints.end.y) / 2),
   };
+
+  if (!layoutEdge.labelPosition) {
+    return offsetLabelFromLine(midpoint, endpoints);
+  }
+
+  const candidate = toRootPoint(layoutEdge.labelPosition, context);
+
+  if (isPointInsideAnyNode(candidate, context)) {
+    return offsetLabelFromLine(midpoint, endpoints);
+  }
+
+  return candidate;
 }
 
 function getLayoutEdge(id: string, layout: DiagramLayoutResult): DiagramLayoutEdge {
@@ -203,6 +233,147 @@ function toRootPoint(point: Point, context: EdgeRenderContext): Point {
   return {
     x: round(point.x - context.originX),
     y: round(point.y - context.originY),
+  };
+}
+
+function getNodeBox(id: string, context: EdgeRenderContext): NodeBox | null {
+  const layoutNode = context.layout.nodes.find((node) => node.id === id);
+  const diagramNode = context.diagram.nodes.find((node) => node.id === id);
+
+  if (!layoutNode || !diagramNode) {
+    return null;
+  }
+
+  return {
+    id,
+    shape: diagramNode.shape,
+    x: layoutNode.x - context.originX,
+    y: layoutNode.y - context.originY,
+    width: layoutNode.width,
+    height: layoutNode.height,
+  };
+}
+
+function getBoundaryPoint(box: NodeBox, toward: Point): Point {
+  const center = getCenter(box);
+  const dx = toward.x - center.x;
+  const dy = toward.y - center.y;
+
+  if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) {
+    return center;
+  }
+
+  if (box.shape === "circle") {
+    return getEllipseBoundaryPoint(box, dx, dy);
+  }
+
+  if (box.shape === "diamond") {
+    return getDiamondBoundaryPoint(box, dx, dy);
+  }
+
+  return getRectangleBoundaryPoint(box, dx, dy);
+}
+
+function getRectangleBoundaryPoint(box: NodeBox, dx: number, dy: number): Point {
+  const center = getCenter(box);
+  const halfWidth = box.width / 2;
+  const halfHeight = box.height / 2;
+  const scale = Math.min(
+    Math.abs(dx) > 0.001 ? halfWidth / Math.abs(dx) : Number.POSITIVE_INFINITY,
+    Math.abs(dy) > 0.001 ? halfHeight / Math.abs(dy) : Number.POSITIVE_INFINITY,
+  );
+
+  return {
+    x: round(center.x + dx * scale),
+    y: round(center.y + dy * scale),
+  };
+}
+
+function getEllipseBoundaryPoint(box: NodeBox, dx: number, dy: number): Point {
+  const center = getCenter(box);
+  const radiusX = box.width / 2;
+  const radiusY = box.height / 2;
+  const scale = 1 / Math.sqrt((dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY));
+
+  return {
+    x: round(center.x + dx * scale),
+    y: round(center.y + dy * scale),
+  };
+}
+
+function getDiamondBoundaryPoint(box: NodeBox, dx: number, dy: number): Point {
+  const center = getCenter(box);
+  const halfWidth = box.width / 2;
+  const halfHeight = box.height / 2;
+  const scale = 1 / (Math.abs(dx) / halfWidth + Math.abs(dy) / halfHeight);
+
+  return {
+    x: round(center.x + dx * scale),
+    y: round(center.y + dy * scale),
+  };
+}
+
+function retreatPoint(point: Point, awayFrom: Point, distance: number): Point {
+  const dx = point.x - awayFrom.x;
+  const dy = point.y - awayFrom.y;
+  const length = Math.hypot(dx, dy);
+
+  if (length <= distance || length < 0.001) {
+    return point;
+  }
+
+  return {
+    x: round(point.x - (dx / length) * distance),
+    y: round(point.y - (dy / length) * distance),
+  };
+}
+
+function offsetLabelFromLine(position: Point, endpoints: { start: Point; end: Point }): Point {
+  const dx = endpoints.end.x - endpoints.start.x;
+  const dy = endpoints.end.y - endpoints.start.y;
+  const length = Math.hypot(dx, dy);
+
+  if (length < 0.001) {
+    return position;
+  }
+
+  const offset = Math.abs(dx) > Math.abs(dy) ? 16 : 12;
+
+  return {
+    x: round(position.x + (-dy / length) * offset),
+    y: round(position.y + (dx / length) * offset),
+  };
+}
+
+function isPointInsideAnyNode(point: Point, context: EdgeRenderContext): boolean {
+  return context.layout.nodes.some((node) => {
+    const box = toRootNodeBox(node, context);
+    return (
+      point.x >= box.x - 4 &&
+      point.x <= box.x + box.width + 4 &&
+      point.y >= box.y - 4 &&
+      point.y <= box.y + box.height + 4
+    );
+  });
+}
+
+function toRootNodeBox(node: DiagramLayoutNode, context: EdgeRenderContext): NodeBox {
+  const diagramNode = context.diagram.nodes.find((entry) => entry.id === node.id);
+
+  return {
+    id: node.id,
+    shape: diagramNode?.shape ?? "rectangle",
+    x: node.x - context.originX,
+    y: node.y - context.originY,
+    width: node.width,
+    height: node.height,
+  };
+}
+
+function getCenter(box: NodeBox): Point {
+  return {
+    x: box.x + box.width / 2,
+    y: box.y + box.height / 2,
   };
 }
 

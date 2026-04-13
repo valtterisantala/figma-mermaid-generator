@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { basicFlowchart } from "../fixtures/basic-flowchart";
+import { classStylingFlowchart } from "../fixtures";
 import { MermaidParseError, parseMermaidFlowchart } from "../core";
 
 describe("parseMermaidFlowchart", () => {
@@ -67,5 +68,33 @@ describe("parseMermaidFlowchart", () => {
     expect(() => parseMermaidFlowchart("flowchart TD\nclass Missing primary")).toThrow(
       'Class assignment references unknown node "Missing".',
     );
+  });
+
+  it("normalizes classDef styling and class assignments", () => {
+    const diagram = parseMermaidFlowchart(classStylingFlowchart);
+
+    expect(diagram.styles).toEqual([
+      {
+        id: "primary",
+        properties: {
+          fill: "#ffffff",
+          stroke: "#18a0fb",
+          color: "#0d2a3f",
+          "stroke-width": "2px",
+        },
+      },
+      {
+        id: "warning",
+        properties: {
+          fill: "#fff4cc",
+          stroke: "#b7791f",
+          color: "#3d2b00",
+          "stroke-width": "3px",
+        },
+      },
+    ]);
+    expect(diagram.nodes.find((node) => node.id === "A")?.classIds).toEqual(["primary"]);
+    expect(diagram.nodes.find((node) => node.id === "B")?.classIds).toEqual(["warning"]);
+    expect(diagram.nodes.find((node) => node.id === "C")?.classIds).toEqual(["primary"]);
   });
 });

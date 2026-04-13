@@ -60,4 +60,25 @@ describe("layoutDiagram", () => {
       );
     }
   });
+
+  it("keeps edge routes near node boundaries instead of node centers", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TD
+      A[Start] --> B[Done]`);
+    const layout = layoutDiagram(diagram);
+    const source = layout.nodes.find((node) => node.id === "A");
+    const target = layout.nodes.find((node) => node.id === "B");
+    const edge = layout.edges[0];
+
+    expect(source).toBeDefined();
+    expect(target).toBeDefined();
+    expect(edge.points.length).toBeGreaterThanOrEqual(2);
+
+    const firstPoint = edge.points[0];
+    const lastPoint = edge.points[edge.points.length - 1];
+
+    expect(firstPoint.y).toBeGreaterThan(source?.y ?? 0);
+    expect(firstPoint.y).toBeLessThan((source?.y ?? 0) + (source?.height ?? 0) + 8);
+    expect(lastPoint.y).toBeGreaterThanOrEqual((target?.y ?? 0) - 8);
+    expect(lastPoint.y).toBeLessThan((target?.y ?? 0) + (target?.height ?? 0));
+  });
 });
