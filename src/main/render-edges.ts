@@ -1,7 +1,9 @@
 import type { DiagramEdge, DiagramLayoutEdge, DiagramLayoutResult, DiagramModel } from "../core";
+import { setEdgeMetadata } from "./metadata";
 
 type EdgeRenderContext = {
   diagram: DiagramModel;
+  instanceId: string;
   layout: DiagramLayoutResult;
   rootFrame: FrameNode;
   originX: number;
@@ -62,6 +64,7 @@ function createEdgeGroup(
 
   const group = figma.group(edgeParts, context.rootFrame);
   group.name = `Edge / ${edge.from} -> ${edge.to}`;
+  setEdgeMetadata(group, edge, context.instanceId);
   return group;
 }
 

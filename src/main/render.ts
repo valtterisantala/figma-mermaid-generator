@@ -5,7 +5,9 @@ import type {
   DiagramNode,
   NodeShape,
 } from "../core";
+import { setDiagramRootMetadata, setNodeMetadata, setSubgraphMetadata } from "./metadata";
 import { renderEdges } from "./render-edges";
+import type { RenderPlacement } from "./rerender";
 
 type RenderBounds = {
   minX: number;
@@ -16,6 +18,7 @@ type RenderBounds = {
 
 type RenderContext = {
   diagram: DiagramModel;
+  instanceId: string;
   layout: DiagramLayoutResult;
   rootFrame: FrameNode;
   originX: number;
@@ -40,13 +43,19 @@ const textFill: SolidPaint = { type: "SOLID", color: { r: 0.1, g: 0.11, b: 0.13 
 export async function renderNativeNodes(
   diagram: DiagramModel,
   layout: DiagramLayoutResult,
+  options: {
+    instanceId: string;
+    placement?: RenderPlacement;
+  },
 ): Promise<FrameNode> {
   await figma.loadFontAsync(labelFont);
 
   const bounds = getRenderBounds(layout);
-  const rootFrame = createRootFrame(diagram, bounds);
+  const rootFrame = createRootFrame(diagram, bounds, options.placement);
+  setDiagramRootMetadata(rootFrame, diagram, options.instanceId);
   const context: RenderContext = {
     diagram,
+    instanceId: options.instanceId,
     layout,
     rootFrame,
     originX: bounds.minX - rootPadding,
@@ -58,25 +67,40 @@ export async function renderNativeNodes(
   renderEdges(context);
   renderNodes(context);
 
-  figma.currentPage.appendChild(rootFrame);
+  insertRootFrame(rootFrame, options.placement);
   figma.viewport.scrollAndZoomIntoView([rootFrame]);
 
   return rootFrame;
 }
 
-function createRootFrame(diagram: DiagramModel, bounds: RenderBounds): FrameNode {
+function createRootFrame(
+  diagram: DiagramModel,
+  bounds: RenderBounds,
+  placement: RenderPlacement | undefined,
+): FrameNode {
   const frame = figma.createFrame();
   frame.name = `Mermaid Diagram / ${diagram.id}`;
   frame.fills = [rootFill];
   frame.strokes = [];
   frame.clipsContent = false;
-  frame.x = figma.viewport.center.x - (bounds.maxX - bounds.minX + rootPadding * 2) / 2;
-  frame.y = figma.viewport.center.y - (bounds.maxY - bounds.minY + rootPadding * 2) / 2;
+  frame.x =
+    placement?.x ?? figma.viewport.center.x - (bounds.maxX - bounds.minX + rootPadding * 2) / 2;
+  frame.y =
+    placement?.y ?? figma.viewport.center.y - (bounds.maxY - bounds.minY + rootPadding * 2) / 2;
   frame.resizeWithoutConstraints(
     Math.max(1, bounds.maxX - bounds.minX + rootPadding * 2),
     Math.max(1, bounds.maxY - bounds.minY + rootPadding * 2),
   );
   return frame;
+}
+
+function insertRootFrame(rootFrame: FrameNode, placement: RenderPlacement | undefined): void {
+  if (placement?.pageIndex !== undefined && placement.pageIndex >= 0) {
+    figma.currentPage.insertChild(placement.pageIndex, rootFrame);
+    return;
+  }
+
+  figma.currentPage.appendChild(rootFrame);
 }
 
 function renderSubgraphs(context: RenderContext): void {
@@ -90,6 +114,7 @@ function renderSubgraphs(context: RenderContext): void {
     const layoutSubgraph = getLayoutSubgraph(subgraph.id, context.layout);
     const frame = figma.createFrame();
     frame.name = `Subgraph / ${subgraph.label}`;
+    setSubgraphMetadata(frame, subgraph, context.instanceId);
     frame.fills = [subgraphFill];
     frame.strokes = [subgraphStroke];
     frame.strokeWeight = 1;
@@ -126,20 +151,33 @@ function renderNodes(context: RenderContext): void {
         layoutNode,
         context.rootFrame,
         getRootNodePosition(layoutNode, context),
+        context.instanceId,
       );
       continue;
     }
 
     if (parent === context.rootFrame) {
-      createNodeGroup(node, layoutNode, parent, getRootNodePosition(layoutNode, context));
+      createNodeGroup(
+        node,
+        layoutNode,
+        parent,
+        getRootNodePosition(layoutNode, context),
+        context.instanceId,
+      );
       continue;
     }
 
     const subgraphLayout = getLayoutSubgraph(node.subgraphId ?? "", context.layout);
-    createNodeGroup(node, layoutNode, parent, {
-      x: layoutNode.x - subgraphLayout.x,
-      y: layoutNode.y - subgraphLayout.y + subgraphTitleHeight,
-    });
+    createNodeGroup(
+      node,
+      layoutNode,
+      parent,
+      {
+        x: layoutNode.x - subgraphLayout.x,
+        y: layoutNode.y - subgraphLayout.y + subgraphTitleHeight,
+      },
+      context.instanceId,
+    );
   }
 }
 
@@ -148,6 +186,7 @@ function createNodeGroup(
   layoutNode: DiagramLayoutNode,
   parent: FrameNode,
   position: { x: number; y: number },
+  instanceId: string,
 ): GroupNode {
   const shape = createNodeShape(node.shape, layoutNode);
   shape.x = position.x;
@@ -164,6 +203,7 @@ function createNodeGroup(
 
   const group = figma.group([shape, label], parent);
   group.name = `Node / ${node.id}`;
+  setNodeMetadata(group, node, instanceId);
   return group;
 }
 

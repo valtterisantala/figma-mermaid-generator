@@ -1,6 +1,7 @@
 import "./polyfills";
 import { layoutDiagram, MermaidParseError, parseMermaidFlowchart } from "../core";
 import { renderNativeNodes } from "./render";
+import { removePreviousRootAfterSuccessfulRender, resolveRenderTarget } from "./rerender";
 
 figma.showUI(__html__, {
   width: 420,
@@ -44,11 +45,16 @@ figma.ui.onmessage = async (message: UiMessage) => {
   try {
     const diagram = parseMermaidFlowchart(applyDirectionOverride(source, message.direction));
     const layout = layoutDiagram(diagram, getLayoutSpacing(message.spacing));
-    const rootFrame = await renderNativeNodes(diagram, layout);
+    const target = resolveRenderTarget(message.replacePrevious);
+    const rootFrame = await renderNativeNodes(diagram, layout, {
+      instanceId: target.instanceId,
+      placement: target.placement,
+    });
+    removePreviousRootAfterSuccessfulRender(target);
 
     figma.ui.postMessage({
       type: "render-complete",
-      message: `Rendered ${diagram.nodes.length} nodes, ${diagram.edges.length} edges, and ${diagram.subgraphs.length} subgraphs.`,
+      message: `${target.mode === "replace" ? "Replaced" : "Rendered"} ${diagram.nodes.length} nodes, ${diagram.edges.length} edges, and ${diagram.subgraphs.length} subgraphs.`,
       nodeId: rootFrame.id,
     });
   } catch (error) {
