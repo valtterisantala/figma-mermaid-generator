@@ -1,0 +1,8 @@
+{
+  "name": "Mermaid Native Generator",
+  "id": "mermaid-native-generator",
+  "api": "1.0.0",
+  "main": "dist/main.js",
+  "ui": "dist/ui.html",
+  "editorType": ["figma"]
+}
