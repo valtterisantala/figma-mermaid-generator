@@ -31,8 +31,47 @@ ${css}
   </head>
   <body>
     <main>
-      <h1>Mermaid Native Generator</h1>
-      <p id="status">Plugin UI is ready.</p>
+      <header>
+        <h1>Mermaid Native Generator</h1>
+        <p id="status" role="status">Ready.</p>
+      </header>
+
+      <label class="field">
+        <span>Mermaid</span>
+        <textarea id="mermaid-input" spellcheck="false"></textarea>
+      </label>
+
+      <div class="controls">
+        <label class="field">
+          <span>Direction</span>
+          <select id="direction-select">
+            <option value="auto">Auto</option>
+            <option value="TD">Top down</option>
+            <option value="LR">Left to right</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Spacing</span>
+          <select id="spacing-select">
+            <option value="comfortable">Comfortable</option>
+            <option value="compact">Compact</option>
+            <option value="spacious">Spacious</option>
+          </select>
+        </label>
+      </div>
+
+      <label class="toggle">
+        <input id="replace-previous" type="checkbox" checked />
+        <span>Replace previous</span>
+      </label>
+
+      <div class="actions">
+        <button id="render-button" type="button">Render</button>
+        <button id="sample-button" type="button" class="secondary">Sample input</button>
+      </div>
+
+      <p id="error-message" class="error" role="alert" hidden></p>
     </main>
     <script>
 ${script.outputFiles[0].text}
