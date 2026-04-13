@@ -5,6 +5,7 @@ import type {
   DiagramNode,
   NodeShape,
 } from "../core";
+import { renderEdges } from "./render-edges";
 
 type RenderBounds = {
   minX: number;
@@ -54,6 +55,7 @@ export async function renderNativeNodes(
   };
 
   renderSubgraphs(context);
+  renderEdges(context);
   renderNodes(context);
 
   figma.currentPage.appendChild(rootFrame);

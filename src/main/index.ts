@@ -48,7 +48,7 @@ figma.ui.onmessage = async (message: UiMessage) => {
 
     figma.ui.postMessage({
       type: "render-complete",
-      message: `Rendered ${diagram.nodes.length} nodes and ${diagram.subgraphs.length} subgraphs. Edges are not rendered yet.`,
+      message: `Rendered ${diagram.nodes.length} nodes, ${diagram.edges.length} edges, and ${diagram.subgraphs.length} subgraphs.`,
       nodeId: rootFrame.id,
     });
   } catch (error) {
