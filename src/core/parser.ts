@@ -36,6 +36,10 @@ type ParsedNodeReference = {
   shape?: NodeShape;
 };
 
+type EdgeEndpoint = {
+  id: string;
+};
+
 type MermaidStatement = {
   text: string;
   lineNumber: number;
@@ -56,6 +60,8 @@ type ScanState = {
 };
 
 const directionPattern = /^(?:flowchart|graph)\s+(TD|TB|LR)$/i;
+const subgraphDirectionPattern = /^direction\s+(TD|TB|LR)$/i;
+const anyDirectionPattern = /^direction\b/i;
 const supportedHeaderPattern = /^(?:flowchart|graph)\b/i;
 
 export function parseMermaidFlowchart(source: string): DiagramModel {
@@ -146,6 +152,11 @@ function parseStatement(rawLine: string, lineNumber: number, context: ParseConte
     return;
   }
 
+  if (anyDirectionPattern.test(statement)) {
+    parseSubgraphDirection(statement, lineNumber, context);
+    return;
+  }
+
   if (statement.startsWith("classDef ")) {
     parseClassDef(statement, lineNumber, context);
     return;
@@ -156,7 +167,7 @@ function parseStatement(rawLine: string, lineNumber: number, context: ParseConte
     return;
   }
 
-  const edgeParts = splitEdgeStatement(statement);
+  const edgeParts = splitEdgeStatement(statement, lineNumber);
   if (edgeParts) {
     parseEdge(edgeParts, lineNumber, context);
     return;
@@ -192,6 +203,37 @@ function closeSubgraph(lineNumber: number, context: ParseContext): void {
   }
 
   context.subgraphStack.pop();
+}
+
+function parseSubgraphDirection(
+  statement: string,
+  lineNumber: number,
+  context: ParseContext,
+): void {
+  const match = statement.match(subgraphDirectionPattern);
+
+  if (!match) {
+    throw new MermaidParseError(
+      "Only TD, TB, and LR subgraph directions are supported.",
+      lineNumber,
+    );
+  }
+
+  const subgraphId = getCurrentSubgraphId(context);
+
+  if (!subgraphId) {
+    throw new MermaidParseError(
+      "direction statements are only supported inside subgraphs.",
+      lineNumber,
+    );
+  }
+
+  const subgraph = context.subgraphs.get(subgraphId);
+  if (!subgraph) {
+    throw new MermaidParseError(`Unknown subgraph "${subgraphId}".`, lineNumber);
+  }
+
+  subgraph.direction = normalizeDirection(match[1]);
 }
 
 function parseClassDef(statement: string, lineNumber: number, context: ParseContext): void {
@@ -245,10 +287,10 @@ function parseEdge(edgeParts: EdgeParts, lineNumber: number, context: ParseConte
   const label = edgeParts.label?.trim();
 
   for (const leftReference of leftReferences) {
-    const from = upsertNode(leftReference, lineNumber, context);
+    const from = resolveEdgeEndpoint(leftReference, lineNumber, context);
 
     for (const rightReference of rightReferences) {
-      const to = upsertNode(rightReference, lineNumber, context);
+      const to = resolveEdgeEndpoint(rightReference, lineNumber, context);
       const edgeIndex = context.edges.length + 1;
       const id = createEdgeId(from.id, to.id, label, edgeIndex);
       const edge: DiagramEdge = {
@@ -266,6 +308,22 @@ function parseEdge(edgeParts: EdgeParts, lineNumber: number, context: ParseConte
       addEdgeToCurrentSubgraph(edge.id, context);
     }
   }
+}
+
+function resolveEdgeEndpoint(
+  parsed: ParsedNodeReference,
+  lineNumber: number,
+  context: ParseContext,
+): EdgeEndpoint {
+  const id = normalizeScopedId(parsed.sourceId);
+
+  if (!parsed.label && !parsed.shape && context.subgraphs.has(id)) {
+    return {
+      id,
+    };
+  }
+
+  return upsertNode(parsed, lineNumber, context);
 }
 
 function parseNodeStatement(statement: string, lineNumber: number, context: ParseContext): void {
@@ -440,7 +498,7 @@ function collectStatements(lines: string[], startIndex: number): MermaidStatemen
   return statements;
 }
 
-function splitEdgeStatement(statement: string): EdgeParts | null {
+function splitEdgeStatement(statement: string, lineNumber: number): EdgeParts | null {
   const marker = findTopLevelEdgeMarker(statement);
 
   if (!marker) {
@@ -452,7 +510,17 @@ function splitEdgeStatement(statement: string): EdgeParts | null {
   const label = extractEdgeLabel(rightWithLabel);
 
   if (!left || !label.right) {
-    return null;
+    throw new MermaidParseError(
+      "Expected node references on both sides of the edge statement.",
+      lineNumber,
+    );
+  }
+
+  if (findTopLevelEdgeMarker(label.right)) {
+    throw new MermaidParseError(
+      'Chained edge statements like "A --> B --> C" are not supported. Split them into separate lines or use & fan-out.',
+      lineNumber,
+    );
   }
 
   return {
@@ -533,15 +601,26 @@ function findClosingEdgeLabel(source: string): number {
 }
 
 function splitNodeReferences(source: string, lineNumber: number): ParsedNodeReference[] {
-  const references = splitTopLevel(source, "&")
-    .map((part) => part.trim())
-    .filter(Boolean);
+  const references = splitTopLevel(source, "&").map((part) => part.trim());
+
+  if (references.some((reference) => reference.length === 0)) {
+    throw new MermaidParseError("Fan-out edge list contains an empty node reference.", lineNumber);
+  }
 
   if (references.length === 0) {
     throw new MermaidParseError("Expected at least one node reference.", lineNumber);
   }
 
-  return references.map((reference) => parseNodeReference(reference, lineNumber));
+  return references.map((reference) => {
+    if (findTopLevelEdgeMarker(reference)) {
+      throw new MermaidParseError(
+        'Chained edge statements like "A --> B --> C" are not supported. Split them into separate lines or use & fan-out.',
+        lineNumber,
+      );
+    }
+
+    return parseNodeReference(reference, lineNumber);
+  });
 }
 
 function splitTopLevel(source: string, separator: string): string[] {

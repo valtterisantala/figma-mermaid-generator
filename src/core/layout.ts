@@ -70,6 +70,10 @@ export function layoutDiagram(
     graph.setNode(node.id, estimateNodeSize(node));
   }
 
+  for (const subgraphId of getSubgraphEdgeEndpointIds(diagram)) {
+    graph.setNode(subgraphId, estimateSubgraphEndpointSize(subgraphId, diagram.subgraphs));
+  }
+
   for (const edge of diagram.edges) {
     graph.setEdge(edge.from, edge.to, estimateEdgeLabel(edge), edge.id);
   }
@@ -116,6 +120,35 @@ function estimateEdgeLabel(edge: DiagramEdge): DagreEdgeLabel {
     labelpos: "c",
     width: Math.ceil(edge.label.length * 7) + 20,
   };
+}
+
+function estimateSubgraphEndpointSize(
+  subgraphId: string,
+  subgraphs: DiagramSubgraph[],
+): DagreNodeLabel {
+  const subgraph = subgraphs.find((entry) => entry.id === subgraphId);
+  const labelWidth = Math.ceil((subgraph?.label ?? subgraphId).length * 7.5) + 64;
+
+  return {
+    width: Math.max(160, labelWidth),
+    height: 96,
+  };
+}
+
+function getSubgraphEdgeEndpointIds(diagram: DiagramModel): string[] {
+  const nodeIds = new Set(diagram.nodes.map((node) => node.id));
+  const subgraphIds = new Set(diagram.subgraphs.map((subgraph) => subgraph.id));
+  const endpointIds = new Set<string>();
+
+  for (const edge of diagram.edges) {
+    for (const id of [edge.from, edge.to]) {
+      if (subgraphIds.has(id) && !nodeIds.has(id)) {
+        endpointIds.add(id);
+      }
+    }
+  }
+
+  return [...endpointIds];
 }
 
 function toLayoutNode(node: DiagramNode, label: DagreNodeLabel): DiagramLayoutNode {

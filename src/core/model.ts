@@ -33,6 +33,7 @@ export type DiagramSubgraph = {
   id: string;
   sourceId: string;
   label: string;
+  direction?: DiagramDirection;
   parentId?: string;
   nodeIds: string[];
   edgeIds: string[];

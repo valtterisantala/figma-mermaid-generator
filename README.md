@@ -66,7 +66,8 @@ Supported:
 - quoted labels with punctuation, multiline text, and simple inline HTML-like content
 - edge labels
 - fan-out edge targets with `&`, such as `A --> B & C & D`
-- basic subgraphs
+- basic subgraphs, including readable titles and safe parsing of local `direction` statements
+- edges to and from known subgraph ids
 - `classDef` and `class` for node styling
 - style mapping for `fill`, `stroke`, `color`, and `stroke-width`
 - Render New and Replace Previous
@@ -79,5 +80,6 @@ Limitations:
 - no full Mermaid syntax parity
 - no bidirectional Figma to Mermaid sync
 - no advanced styling, themes, or settings UI
-- edges are simple straight native vectors for v1
+- subgraph-local `direction` statements are preserved in the model, but v1 layout still uses the diagram-level direction
+- edges use native vector paths with basic routing
 - replacement preserves the generated diagram root placement, not manual edits inside the previous output

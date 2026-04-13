@@ -61,6 +61,36 @@ describe("layoutDiagram", () => {
     }
   });
 
+  it("lays out edges that connect to known subgraph ids", () => {
+    const diagram = parseMermaidFlowchart(`flowchart LR
+      H[Hub]
+      subgraph R1[Research phase]
+        A[Input] --> B[Output]
+      end
+      H --> R1
+      R1 --> X[Next]`);
+    const layout = layoutDiagram(diagram);
+
+    expect(layout.nodes.find((node) => node.id === "R1")).toBeUndefined();
+    expect(layout.subgraphs.find((subgraph) => subgraph.id === "R1")).toBeDefined();
+    expect(layout.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: expect.stringContaining("_H_to_R1"),
+          points: expect.arrayContaining([
+            expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+          ]),
+        }),
+        expect.objectContaining({
+          id: expect.stringContaining("_R1_to_X"),
+          points: expect.arrayContaining([
+            expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }),
+          ]),
+        }),
+      ]),
+    );
+  });
+
   it("keeps edge routes near node boundaries instead of node centers", () => {
     const diagram = parseMermaidFlowchart(`flowchart TD
       A[Start] --> B[Done]`);

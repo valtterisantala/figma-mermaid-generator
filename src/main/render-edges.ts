@@ -44,6 +44,7 @@ const edgeLabelBackground: SolidPaint = {
   opacity: 0.92,
 };
 const edgeLabelFont: FontName = { family: "Inter", style: "Regular" };
+const subgraphTitleHeight = 28;
 
 export function renderEdges(context: EdgeRenderContext): void {
   for (const edge of context.diagram.edges) {
@@ -190,17 +191,30 @@ function getNodeBox(id: string, context: EdgeRenderContext): NodeBox | null {
   const layoutNode = context.layout.nodes.find((node) => node.id === id);
   const diagramNode = context.diagram.nodes.find((node) => node.id === id);
 
-  if (!layoutNode || !diagramNode) {
+  if (layoutNode && diagramNode) {
+    return {
+      id,
+      shape: diagramNode.shape,
+      x: layoutNode.x - context.originX,
+      y: layoutNode.y - context.originY,
+      width: layoutNode.width,
+      height: layoutNode.height,
+    };
+  }
+
+  const layoutSubgraph = context.layout.subgraphs.find((subgraph) => subgraph.id === id);
+
+  if (!layoutSubgraph) {
     return null;
   }
 
   return {
     id,
-    shape: diagramNode.shape,
-    x: layoutNode.x - context.originX,
-    y: layoutNode.y - context.originY,
-    width: layoutNode.width,
-    height: layoutNode.height,
+    shape: "rectangle",
+    x: layoutSubgraph.x - context.originX,
+    y: layoutSubgraph.y - context.originY,
+    width: layoutSubgraph.width,
+    height: layoutSubgraph.height + subgraphTitleHeight,
   };
 }
 

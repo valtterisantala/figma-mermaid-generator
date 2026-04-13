@@ -168,6 +168,76 @@ candidate node"]`);
     ]);
   });
 
+  it("parses subgraph-local direction statements without halting", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TB
+      subgraph R1[Research phase]
+        direction LR
+        A1[What AI does<br/>Line 2<br/>Line 3] --> A2[Output]
+      end`);
+
+    expect(diagram.subgraphs[0]).toMatchObject({
+      id: "R1",
+      direction: "LR",
+      label: "Research phase",
+      nodeIds: ["A1", "A2"],
+    });
+    expect(diagram.nodes.find((node) => node.id === "A1")?.label).toBe(
+      "What AI does<br/>Line 2<br/>Line 3",
+    );
+  });
+
+  it("supports edges to and from known subgraph ids without creating fake nodes", () => {
+    const diagram = parseMermaidFlowchart(`flowchart LR
+      H[Hub]
+      subgraph R1[Research phase]
+        A[Input] --> B[Output]
+      end
+      H --> R1
+      R1 --> X[Next phase]`);
+
+    expect(diagram.subgraphs.find((subgraph) => subgraph.id === "R1")).toBeDefined();
+    expect(diagram.nodes.find((node) => node.id === "R1")).toBeUndefined();
+    expect(diagram.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ from: "H", to: "R1" }),
+        expect.objectContaining({ from: "R1", to: "X" }),
+      ]),
+    );
+  });
+
+  it("handles phase diagrams with subgraph directions, subgraph edges, and br labels", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TB
+      Start[Start]
+
+      subgraph P1[Phase 1: Discover]
+        direction LR
+        A1[Inventory<br/>skills<br/>knowledge] --> A2[Map gaps]
+      end
+
+      subgraph P2[Phase 2: Build]
+        direction TD
+        B1[Draft architecture] --> B2[Validate]
+      end
+
+      Start --> P1
+      P1 --> P2
+      P2 --> Done[Done]`);
+
+    expect(diagram.subgraphs.map((subgraph) => subgraph.direction)).toEqual(["LR", "TD"]);
+    expect(diagram.nodes.find((node) => node.id === "A1")?.label).toBe(
+      "Inventory<br/>skills<br/>knowledge",
+    );
+    expect(diagram.nodes.find((node) => node.id === "P1")).toBeUndefined();
+    expect(diagram.nodes.find((node) => node.id === "P2")).toBeUndefined();
+    expect(diagram.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ from: "Start", to: "P1" }),
+        expect.objectContaining({ from: "P1", to: "P2" }),
+        expect.objectContaining({ from: "P2", to: "Done" }),
+      ]),
+    );
+  });
+
   it("handles dense sibling branches under one parent", () => {
     const diagram = parseMermaidFlowchart(`flowchart TB
       root["Knowledge base map"] --> docs["Docs"] & prompts["Prompt examples"] & tools["Tools"] & qa["QA checks"] & future["Future candidates"]
@@ -177,5 +247,31 @@ candidate node"]`);
     expect(diagram.nodes).toHaveLength(11);
     expect(diagram.edges).toHaveLength(10);
     expect(diagram.nodes.find((node) => node.id === "future")?.label).toBe("Future candidates");
+  });
+
+  it("handles dense fan-out and sibling branches across blank sections", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TB
+      root["Architecture map"] --> api["API"] & worker["Worker"] & ui["Plugin UI"] & data["Knowledge base"]
+
+      api --> routes["Routes"] & auth["Auth"] & errors["Errors"]
+
+      worker --> parse["Parse"] & normalize["Normalize"] & layout["Layout"] & render["Render"]
+
+      data --> current["Current docs"] & future["Future candidates"] & review["Review queue"]`);
+
+    expect(diagram.nodes).toHaveLength(15);
+    expect(diagram.edges).toHaveLength(14);
+  });
+
+  it("fails chained edge statements with a specific message", () => {
+    expect(() => parseMermaidFlowchart("flowchart TD\nA --> B --> C")).toThrow(
+      'Chained edge statements like "A --> B --> C" are not supported.',
+    );
+  });
+
+  it("fails malformed fan-out statements with a specific message", () => {
+    expect(() => parseMermaidFlowchart("flowchart TD\nA --> B &")).toThrow(
+      "Fan-out edge list contains an empty node reference.",
+    );
   });
 });
