@@ -32,8 +32,8 @@ jobs:
               return;
             }
 
-            const owner = context.repo.owner;
             const repo = context.repo.repo;
+            const owner = context.repo.owner;
 
             function walk(dir) {
               const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -64,38 +64,28 @@ jobs:
             const existingIssues = await github.paginate(github.rest.issues.listForRepo, {
               owner,
               repo,
-              state: 'all',
+              state: 'open',
               per_page: 100
             });
 
             for (const fullPath of files) {
-              const relativePath = path
-                .relative(process.env.GITHUB_WORKSPACE, fullPath)
-                .replace(/\\/g, '/');
-
+              const relativePath = path.relative(process.env.GITHUB_WORKSPACE, fullPath).replace(/\\/g, '/');
               const content = fs.readFileSync(fullPath, 'utf8').trim();
               const title = extractTitle(content, path.basename(fullPath));
               const marker = `<!-- source: ${relativePath} -->`;
-              const body = `${content}\n\n---\n${marker}`;
 
-              const existingIssue = existingIssues.find(issue =>
+              const alreadyExists = existingIssues.find(issue =>
                 !issue.pull_request &&
                 typeof issue.body === 'string' &&
                 issue.body.includes(marker)
               );
 
-              if (existingIssue) {
-                await github.rest.issues.update({
-                  owner,
-                  repo,
-                  issue_number: existingIssue.number,
-                  title,
-                  body,
-                  state: 'open'
-                });
-                core.info(`Updated issue #${existingIssue.number} from ${relativePath}.`);
+              if (alreadyExists) {
+                core.info(`Skipping ${relativePath}; already synced as issue #${alreadyExists.number}.`);
                 continue;
               }
+
+              const body = `${content}\n\n---\n${marker}`;
 
               const created = await github.rest.issues.create({
                 owner,
