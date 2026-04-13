@@ -114,50 +114,55 @@ function renderSubgraphs(context: RenderContext): void {
 function renderNodes(context: RenderContext): void {
   for (const node of context.diagram.nodes) {
     const layoutNode = getLayoutNode(node.id, context.layout);
-    const nodeFrame = createNodeFrame(node, layoutNode);
     const parent = node.subgraphId
       ? context.subgraphFrames.get(node.subgraphId)
       : context.rootFrame;
 
     if (!parent) {
-      context.rootFrame.appendChild(nodeFrame);
-      placeNodeInRoot(nodeFrame, layoutNode, context);
+      createNodeGroup(
+        node,
+        layoutNode,
+        context.rootFrame,
+        getRootNodePosition(layoutNode, context),
+      );
       continue;
     }
 
-    parent.appendChild(nodeFrame);
-
     if (parent === context.rootFrame) {
-      placeNodeInRoot(nodeFrame, layoutNode, context);
+      createNodeGroup(node, layoutNode, parent, getRootNodePosition(layoutNode, context));
       continue;
     }
 
     const subgraphLayout = getLayoutSubgraph(node.subgraphId ?? "", context.layout);
-    nodeFrame.x = layoutNode.x - subgraphLayout.x;
-    nodeFrame.y = layoutNode.y - subgraphLayout.y + subgraphTitleHeight;
+    createNodeGroup(node, layoutNode, parent, {
+      x: layoutNode.x - subgraphLayout.x,
+      y: layoutNode.y - subgraphLayout.y + subgraphTitleHeight,
+    });
   }
 }
 
-function createNodeFrame(node: DiagramNode, layoutNode: DiagramLayoutNode): FrameNode {
-  const frame = figma.createFrame();
-  frame.name = `Node / ${node.id}`;
-  frame.fills = [];
-  frame.strokes = [];
-  frame.clipsContent = false;
-  frame.resizeWithoutConstraints(layoutNode.width, layoutNode.height);
-
+function createNodeGroup(
+  node: DiagramNode,
+  layoutNode: DiagramLayoutNode,
+  parent: FrameNode,
+  position: { x: number; y: number },
+): GroupNode {
   const shape = createNodeShape(node.shape, layoutNode);
-  frame.appendChild(shape);
+  shape.x = position.x;
+  shape.y = position.y;
+  parent.appendChild(shape);
 
   const label = createTextLayer("Node Label", node.label, 13);
   label.textAlignHorizontal = "CENTER";
   label.textAlignVertical = "CENTER";
-  label.x = 8;
-  label.y = 0;
+  label.x = position.x + 8;
+  label.y = position.y;
   label.resizeWithoutConstraints(Math.max(1, layoutNode.width - 16), layoutNode.height);
-  frame.appendChild(label);
+  parent.appendChild(label);
 
-  return frame;
+  const group = figma.group([shape, label], parent);
+  group.name = `Node / ${node.id}`;
+  return group;
 }
 
 function createNodeShape(shape: NodeShape, layoutNode: DiagramLayoutNode): SceneNode {
@@ -228,13 +233,14 @@ function createTextLayer(name: string, characters: string, fontSize: number): Te
   return text;
 }
 
-function placeNodeInRoot(
-  nodeFrame: FrameNode,
+function getRootNodePosition(
   layoutNode: DiagramLayoutNode,
   context: RenderContext,
-): void {
-  nodeFrame.x = layoutNode.x - context.originX;
-  nodeFrame.y = layoutNode.y - context.originY;
+): { x: number; y: number } {
+  return {
+    x: layoutNode.x - context.originX,
+    y: layoutNode.y - context.originY,
+  };
 }
 
 function getRenderBounds(layout: DiagramLayoutResult): RenderBounds {
