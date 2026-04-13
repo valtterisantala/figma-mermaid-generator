@@ -13,4 +13,5 @@ export type {
   EdgeKind,
   NodeShape,
 } from "./model";
+export { layoutDiagram } from "./layout";
 export { MermaidParseError, parseMermaidFlowchart } from "./parser";

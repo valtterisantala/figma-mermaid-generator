@@ -32,5 +32,8 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.48.0",
     "vitest": "^4.0.15"
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "^3.0.0"
   }
 }
