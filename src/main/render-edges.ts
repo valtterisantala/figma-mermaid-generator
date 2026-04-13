@@ -101,6 +101,7 @@ function createEdgeLabel(label: string, position: Point, context: EdgeRenderCont
   applyMermaidLabelToTextNode(text, label, {
     baseFontName: context.settings.fontName,
     boldFontName: context.boldFontName,
+    fontSize: context.settings.fontSize,
   });
   text.textAlignHorizontal = "CENTER";
   text.textAlignVertical = "CENTER";

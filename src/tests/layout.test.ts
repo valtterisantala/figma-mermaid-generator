@@ -201,4 +201,38 @@ describe("layoutDiagram", () => {
     expect(multilineBox.width).toBeLessThan(singleBox.width);
     expect(multilineBox.height).toBeGreaterThan(singleBox.height);
   });
+
+  it("wraps long box-like node labels instead of growing width indefinitely", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TD
+      A[This is a very long architecture label that should wrap instead of stretching the node far across the canvas]`);
+    const layout = layoutDiagram(diagram);
+    const node = layout.nodes.find((entry) => entry.id === "A");
+
+    expect(node).toBeDefined();
+    expect(node?.width).toBeLessThanOrEqual(252);
+    expect(node?.height).toBeGreaterThan(56);
+  });
+
+  it("keeps explicit Mermaid line breaks working alongside automatic wrapping", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TD
+      A[Overview<br/>This is a long explanatory sentence that should still wrap within the node width cap]`);
+    const layout = layoutDiagram(diagram);
+    const node = layout.nodes.find((entry) => entry.id === "A");
+    const estimated = estimateMultilineTextBox(
+      "Overview<br/>This is a long explanatory sentence that should still wrap within the node width cap",
+      {
+        fontSize: 13,
+        horizontalPadding: 32,
+        maxTextWidth: 220,
+        minHeight: 56,
+        minWidth: 112,
+        verticalPadding: 20,
+      },
+    );
+
+    expect(node).toBeDefined();
+    expect(estimated.text.split("\n").length).toBeGreaterThanOrEqual(3);
+    expect(node?.width).toBeLessThanOrEqual(252);
+    expect(node?.height).toBe(estimated.height);
+  });
 });

@@ -35,6 +35,8 @@ const defaultLayoutOptions: LayoutOptions = {
   subgraphPadding: 32,
 };
 
+const maxBoxLikeNodeTextWidth = 220;
+
 const minNodeSizeByShape: Record<DiagramNode["shape"], { width: number; height: number }> = {
   asymmetric: { width: 120, height: 56 },
   circle: { width: 72, height: 72 },
@@ -101,6 +103,7 @@ function estimateNodeSize(node: DiagramNode): DagreNodeLabel {
   const labelBox = estimateMultilineTextBox(node.label, {
     fontSize: 13,
     horizontalPadding: 32,
+    maxTextWidth: isBoxLikeShape(node.shape) ? maxBoxLikeNodeTextWidth : undefined,
     minHeight: minimum.height,
     minWidth: minimum.width,
     verticalPadding: 20,
@@ -110,6 +113,12 @@ function estimateNodeSize(node: DiagramNode): DagreNodeLabel {
     width: labelBox.width,
     height: labelBox.height,
   };
+}
+
+function isBoxLikeShape(shape: DiagramNode["shape"]): boolean {
+  return (
+    shape === "rectangle" || shape === "rounded" || shape === "stadium" || shape === "asymmetric"
+  );
 }
 
 function estimateEdgeLabel(edge: DiagramEdge): DagreEdgeLabel {

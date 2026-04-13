@@ -41,6 +41,7 @@ export type RenderSettings = {
 
 const rootPadding = 48;
 const subgraphTitleHeight = 28;
+const maxBoxLikeNodeTextWidth = 220;
 export const defaultRenderSettings: RenderSettings = {
   fontName: { family: "FK Grotesk Neue Trial", style: "Regular" },
   fontSize: 13,
@@ -218,7 +219,9 @@ function createNodeGroup(
   shape.y = position.y;
   parent.appendChild(shape);
 
-  const label = createTextLayer("Node Label", node.label, context);
+  const label = createTextLayer("Node Label", node.label, context, {
+    maxTextWidth: isBoxLikeShape(node.shape) ? maxBoxLikeNodeTextWidth : undefined,
+  });
   label.textAlignHorizontal = "CENTER";
   label.textAlignVertical = "CENTER";
   label.fills = [style.textFill];
@@ -304,7 +307,14 @@ function getCornerRadius(
   return 0;
 }
 
-function createTextLayer(name: string, characters: string, context: RenderContext): TextNode {
+function createTextLayer(
+  name: string,
+  characters: string,
+  context: RenderContext,
+  options: {
+    maxTextWidth?: number;
+  } = {},
+): TextNode {
   const text = figma.createText();
   text.name = name;
   text.fontName = context.settings.fontName;
@@ -313,6 +323,8 @@ function createTextLayer(name: string, characters: string, context: RenderContex
   applyMermaidLabelToTextNode(text, characters, {
     baseFontName: context.settings.fontName,
     boldFontName: context.boldFontName,
+    fontSize: context.settings.fontSize,
+    maxWidth: options.maxTextWidth,
   });
   return text;
 }
@@ -387,6 +399,12 @@ function diagramUsesBoldMarkup(diagram: DiagramModel): boolean {
     diagram.nodes.some((node) => /<b>/i.test(node.label)) ||
     diagram.subgraphs.some((subgraph) => /<b>/i.test(subgraph.label)) ||
     diagram.edges.some((edge) => edge.label && /<b>/i.test(edge.label))
+  );
+}
+
+function isBoxLikeShape(shape: NodeShape): boolean {
+  return (
+    shape === "rectangle" || shape === "rounded" || shape === "stadium" || shape === "asymmetric"
   );
 }
 

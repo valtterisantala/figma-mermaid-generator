@@ -66,4 +66,31 @@ describe("label text rendering helpers", () => {
     expect(boldMarkup.text).toBe("Alpha Beta");
     expect(boldMarkup.width).toBe(plain.width);
   });
+
+  it("wraps long rendered labels when a max width is provided", () => {
+    const rendered = renderMermaidLabelText(
+      "This is a long label that should wrap into multiple lines",
+      {
+        fontSize: 13,
+        maxWidth: 120,
+      },
+    );
+
+    expect(rendered.text).toContain("\n");
+    expect(rendered.text.split("\n").every((line) => line.length <= 15)).toBe(true);
+  });
+
+  it("preserves bold ranges after wrapping", () => {
+    const rendered = renderMermaidLabelText("Alpha <b>Beta Gamma Delta</b> Epsilon", {
+      fontSize: 13,
+      maxWidth: 110,
+    });
+
+    expect(rendered.text).toContain("\n");
+    expect(rendered.boldRanges.length).toBeGreaterThan(0);
+    const boldText = rendered.boldRanges
+      .map((range) => rendered.text.slice(range.start, range.end))
+      .join("");
+    expect(boldText.replace(/\s/g, "")).toContain("BetaGammaDelta");
+  });
 });

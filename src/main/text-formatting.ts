@@ -3,6 +3,8 @@ import { renderMermaidLabelText, type RenderedLabelText } from "../core";
 type TextFormattingOptions = {
   baseFontName: FontName;
   boldFontName: FontName;
+  fontSize: number;
+  maxWidth?: number;
 };
 
 export function applyMermaidLabelToTextNode(
@@ -10,7 +12,10 @@ export function applyMermaidLabelToTextNode(
   label: string,
   options: TextFormattingOptions,
 ): RenderedLabelText {
-  const rendered = renderMermaidLabelText(label);
+  const rendered = renderMermaidLabelText(label, {
+    fontSize: options.fontSize,
+    maxWidth: options.maxWidth,
+  });
 
   textNode.fontName = options.baseFontName;
   textNode.characters = rendered.text;
