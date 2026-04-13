@@ -48,7 +48,7 @@ const defaultRenderSettings: RenderSettings = {
   fontStyle: "Regular",
   fontSize: 13,
   strokeWidth: 1,
-  cornerRadius: 8,
+  cornerRadius: 20,
 };
 
 const sampleMermaid = `flowchart TD

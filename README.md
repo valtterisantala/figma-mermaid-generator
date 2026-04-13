@@ -65,6 +65,7 @@ Supported:
 - basic node labels and common v1 shapes
 - quoted labels with punctuation, multiline text, and simple inline HTML-like content
 - edge labels
+- chained edge statements, such as `A --> B --> C`
 - fan-out edge targets with `&`, such as `A --> B & C & D`
 - basic subgraphs, including readable titles and safe parsing of local `direction` statements
 - edges to and from known subgraph ids

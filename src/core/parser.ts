@@ -63,6 +63,8 @@ const directionPattern = /^(?:flowchart|graph)\s+(TD|TB|LR)$/i;
 const subgraphDirectionPattern = /^direction\s+(TD|TB|LR)$/i;
 const anyDirectionPattern = /^direction\b/i;
 const supportedHeaderPattern = /^(?:flowchart|graph)\b/i;
+const unsupportedDiagramPattern =
+  /^(sequenceDiagram|stateDiagram(?:-v2)?|gantt|mindmap|erDiagram|classDiagram|journey|pie)\b/i;
 
 export function parseMermaidFlowchart(source: string): DiagramModel {
   const lines = source.split(/\r?\n/);
@@ -126,6 +128,14 @@ function findHeader(lines: string[]): { index: number; direction: DiagramDirecti
       );
     }
 
+    const unsupportedDiagram = statement.match(unsupportedDiagramPattern);
+    if (unsupportedDiagram) {
+      throw new MermaidParseError(
+        `Unsupported Mermaid diagram type "${unsupportedDiagram[1]}". This plugin currently supports flowchart TD, TB, and LR only.`,
+        index + 1,
+      );
+    }
+
     throw new MermaidParseError(
       "Expected Mermaid flowchart header, such as flowchart TD.",
       index + 1,
@@ -168,8 +178,10 @@ function parseStatement(rawLine: string, lineNumber: number, context: ParseConte
   }
 
   const edgeParts = splitEdgeStatement(statement, lineNumber);
-  if (edgeParts) {
-    parseEdge(edgeParts, lineNumber, context);
+  if (edgeParts.length > 0) {
+    for (const edgePart of edgeParts) {
+      parseEdge(edgePart, lineNumber, context);
+    }
     return;
   }
 
@@ -186,6 +198,8 @@ function parseSubgraph(statement: string, lineNumber: number, context: ParseCont
     throw new MermaidParseError(`Duplicate subgraph id "${parsed.sourceId}".`, lineNumber);
   }
 
+  removePlainPlaceholderNode(id, context);
+
   context.subgraphs.set(id, {
     id,
     sourceId: parsed.sourceId,
@@ -195,6 +209,25 @@ function parseSubgraph(statement: string, lineNumber: number, context: ParseCont
     edgeIds: [],
   });
   context.subgraphStack.push(id);
+}
+
+function removePlainPlaceholderNode(id: string, context: ParseContext): void {
+  const existingNode = context.nodes.get(id);
+
+  if (
+    !existingNode ||
+    existingNode.label !== existingNode.sourceId ||
+    existingNode.shape !== "rectangle" ||
+    existingNode.classIds.length > 0
+  ) {
+    return;
+  }
+
+  context.nodes.delete(id);
+
+  for (const subgraph of context.subgraphs.values()) {
+    subgraph.nodeIds = subgraph.nodeIds.filter((nodeId) => nodeId !== id);
+  }
 }
 
 function closeSubgraph(lineNumber: number, context: ParseContext): void {
@@ -498,37 +531,45 @@ function collectStatements(lines: string[], startIndex: number): MermaidStatemen
   return statements;
 }
 
-function splitEdgeStatement(statement: string, lineNumber: number): EdgeParts | null {
+function splitEdgeStatement(statement: string, lineNumber: number): EdgeParts[] {
   const marker = findTopLevelEdgeMarker(statement);
 
   if (!marker) {
-    return null;
+    return [];
   }
 
-  const left = statement.slice(0, marker.index).trim();
-  const rightWithLabel = statement.slice(marker.index + marker.value.length).trim();
-  const label = extractEdgeLabel(rightWithLabel);
+  const parts: EdgeParts[] = [];
+  let left = statement.slice(0, marker.index).trim();
+  let currentMarker = marker.value;
+  let rest = statement.slice(marker.index + marker.value.length).trim();
 
-  if (!left || !label.right) {
-    throw new MermaidParseError(
-      "Expected node references on both sides of the edge statement.",
-      lineNumber,
-    );
+  while (true) {
+    const label = extractEdgeLabel(rest);
+    const nextMarker = findTopLevelEdgeMarker(label.right);
+    const right = (nextMarker ? label.right.slice(0, nextMarker.index) : label.right).trim();
+
+    if (!left || !right) {
+      throw new MermaidParseError(
+        "Expected node references on both sides of the edge statement.",
+        lineNumber,
+      );
+    }
+
+    parts.push({
+      left,
+      marker: currentMarker,
+      label: label.label,
+      right,
+    });
+
+    if (!nextMarker) {
+      return parts;
+    }
+
+    left = right;
+    currentMarker = nextMarker.value;
+    rest = label.right.slice(nextMarker.index + nextMarker.value.length).trim();
   }
-
-  if (findTopLevelEdgeMarker(label.right)) {
-    throw new MermaidParseError(
-      'Chained edge statements like "A --> B --> C" are not supported. Split them into separate lines or use & fan-out.',
-      lineNumber,
-    );
-  }
-
-  return {
-    left,
-    marker: marker.value,
-    label: label.label,
-    right: label.right,
-  };
 }
 
 function findTopLevelEdgeMarker(statement: string): { index: number; value: string } | null {
@@ -614,7 +655,7 @@ function splitNodeReferences(source: string, lineNumber: number): ParsedNodeRefe
   return references.map((reference) => {
     if (findTopLevelEdgeMarker(reference)) {
       throw new MermaidParseError(
-        'Chained edge statements like "A --> B --> C" are not supported. Split them into separate lines or use & fan-out.',
+        `Unsupported edge marker inside node reference "${reference}".`,
         lineNumber,
       );
     }

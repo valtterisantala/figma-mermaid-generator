@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { basicFlowchart } from "../fixtures/basic-flowchart";
-import { layoutDiagram, parseMermaidFlowchart } from "../core";
+import { estimateMultilineTextBox, layoutDiagram, parseMermaidFlowchart } from "../core";
 
 describe("layoutDiagram", () => {
   it("produces deterministic coordinates and edge routes for TD graphs", () => {
@@ -110,5 +110,95 @@ describe("layoutDiagram", () => {
     expect(firstPoint.y).toBeLessThan((source?.y ?? 0) + (source?.height ?? 0) + 8);
     expect(lastPoint.y).toBeGreaterThanOrEqual((target?.y ?? 0) - 8);
     expect(lastPoint.y).toBeLessThan((target?.y ?? 0) + (target?.height ?? 0));
+  });
+
+  it("sizes multiline nodes from the longest rendered line instead of raw br text length", () => {
+    const singleLine = parseMermaidFlowchart(`flowchart TD
+      A[What AI does Line 2 Line 3]`);
+    const multiline = parseMermaidFlowchart(`flowchart TD
+      A[What AI does<br/>Line 2<br/>Line 3]`);
+
+    const singleLayout = layoutDiagram(singleLine);
+    const multilineLayout = layoutDiagram(multiline);
+    const singleNode = singleLayout.nodes.find((node) => node.id === "A");
+    const multilineNode = multilineLayout.nodes.find((node) => node.id === "A");
+
+    expect(singleNode).toBeDefined();
+    expect(multilineNode).toBeDefined();
+    expect(multilineNode?.width).toBeLessThan(singleNode?.width ?? 0);
+    expect(multilineNode?.height).toBeGreaterThan(singleNode?.height ?? 0);
+  });
+
+  it("grows node height with rendered line count", () => {
+    const twoLines = parseMermaidFlowchart(`flowchart TD
+      A[Alpha<br/>Beta]`);
+    const fourLines = parseMermaidFlowchart(`flowchart TD
+      A[Alpha<br/>Beta<br/>Gamma<br/>Delta]`);
+
+    const twoLineNode = layoutDiagram(twoLines).nodes.find((node) => node.id === "A");
+    const fourLineNode = layoutDiagram(fourLines).nodes.find((node) => node.id === "A");
+
+    expect(fourLineNode?.height).toBeGreaterThan(twoLineNode?.height ?? 0);
+  });
+
+  it("uses the longest rendered line for multiline width estimates", () => {
+    const box = estimateMultilineTextBox("Short<br/>Longest rendered line<br/>Mid", {
+      fontSize: 13,
+      horizontalPadding: 32,
+      minHeight: 56,
+      minWidth: 112,
+      verticalPadding: 20,
+    });
+
+    const shortLineBox = estimateMultilineTextBox("Short", {
+      fontSize: 13,
+      horizontalPadding: 32,
+      minHeight: 56,
+      minWidth: 112,
+      verticalPadding: 20,
+    });
+
+    expect(box.lineCount).toBe(3);
+    expect(box.width).toBeGreaterThan(shortLineBox.width);
+    expect(box.width).toBe(
+      estimateMultilineTextBox("Longest rendered line", {
+        fontSize: 13,
+        horizontalPadding: 32,
+        minHeight: 56,
+        minWidth: 112,
+        verticalPadding: 20,
+      }).width,
+    );
+  });
+
+  it("sizes multiline edge labels from rendered lines", () => {
+    const singleLine = parseMermaidFlowchart(`flowchart LR
+      A -->|Alpha Beta Gamma| B`);
+    const multiline = parseMermaidFlowchart(`flowchart LR
+      A -->|Alpha<br/>Beta<br/>Gamma| B`);
+
+    const singleEdge = layoutDiagram(singleLine).edges[0];
+    const multilineEdge = layoutDiagram(multiline).edges[0];
+
+    expect(singleEdge.labelPosition).toBeDefined();
+    expect(multilineEdge.labelPosition).toBeDefined();
+
+    const singleBox = estimateMultilineTextBox("Alpha Beta Gamma", {
+      fontSize: 12,
+      horizontalPadding: 20,
+      minHeight: 24,
+      minWidth: 20,
+      verticalPadding: 8,
+    });
+    const multilineBox = estimateMultilineTextBox("Alpha<br/>Beta<br/>Gamma", {
+      fontSize: 12,
+      horizontalPadding: 20,
+      minHeight: 24,
+      minWidth: 20,
+      verticalPadding: 8,
+    });
+
+    expect(multilineBox.width).toBeLessThan(singleBox.width);
+    expect(multilineBox.height).toBeGreaterThan(singleBox.height);
   });
 });

@@ -5,10 +5,12 @@ import type {
   DiagramNode,
   NodeShape,
 } from "../core";
+import { estimateMultilineTextBox } from "./label-text";
 import { setDiagramRootMetadata, setNodeMetadata, setSubgraphMetadata } from "./metadata";
 import { renderEdges } from "./render-edges";
 import type { RenderPlacement } from "./rerender";
 import { resolveNodeStyle, type ResolvedNodeStyle } from "./styles";
+import { applyMermaidLabelToTextNode } from "./text-formatting";
 
 type RenderBounds = {
   minX: number;
@@ -25,7 +27,9 @@ type RenderContext = {
   originX: number;
   originY: number;
   settings: RenderSettings;
+  boldFontName: FontName;
   subgraphFrames: Map<string, FrameNode>;
+  subgraphTitleHeights: Map<string, number>;
 };
 
 export type RenderSettings = {
@@ -41,7 +45,7 @@ export const defaultRenderSettings: RenderSettings = {
   fontName: { family: "FK Grotesk Neue Trial", style: "Regular" },
   fontSize: 13,
   strokeWidth: 1,
-  cornerRadius: 8,
+  cornerRadius: 20,
 };
 const rootFill: SolidPaint = { type: "SOLID", color: { r: 0.96, g: 0.97, b: 0.98 } };
 const subgraphFill: SolidPaint = {
@@ -63,8 +67,10 @@ export async function renderNativeNodes(
 ): Promise<FrameNode> {
   const settings = resolveRenderSettings(options.settings);
   await figma.loadFontAsync(settings.fontName);
+  const boldFontName = await loadBoldFontName(diagram, settings.fontName);
 
-  const bounds = getRenderBounds(layout);
+  const subgraphTitleHeights = getSubgraphTitleHeights(diagram, settings);
+  const bounds = getRenderBounds(layout, subgraphTitleHeights);
   const rootFrame = createRootFrame(diagram, bounds, options.placement);
   setDiagramRootMetadata(rootFrame, diagram, options.instanceId);
   const context: RenderContext = {
@@ -75,7 +81,9 @@ export async function renderNativeNodes(
     originX: bounds.minX - rootPadding,
     originY: bounds.minY - rootPadding,
     settings,
+    boldFontName,
     subgraphFrames: new Map(),
+    subgraphTitleHeights,
   };
 
   renderSubgraphs(context);
@@ -137,15 +145,20 @@ function renderSubgraphs(context: RenderContext): void {
     frame.clipsContent = false;
     frame.x = layoutSubgraph.x - context.originX;
     frame.y = layoutSubgraph.y - context.originY;
-    frame.resizeWithoutConstraints(
-      layoutSubgraph.width,
-      layoutSubgraph.height + subgraphTitleHeight,
-    );
+    const titleHeight = getSubgraphTitleHeight(subgraph.id, context);
+    frame.resizeWithoutConstraints(layoutSubgraph.width, layoutSubgraph.height + titleHeight);
 
     const title = createTextLayer("Subgraph Title", subgraph.label, context);
+    const titleBox = estimateMultilineTextBox(subgraph.label, {
+      fontSize: context.settings.fontSize,
+      horizontalPadding: 0,
+      minHeight: 18,
+      minWidth: Math.max(1, layoutSubgraph.width - 24),
+      verticalPadding: 0,
+    });
     title.x = 12;
     title.y = 8;
-    title.resizeWithoutConstraints(Math.max(1, layoutSubgraph.width - 24), 18);
+    title.resizeWithoutConstraints(Math.max(1, layoutSubgraph.width - 24), titleBox.height);
     frame.appendChild(title);
 
     context.rootFrame.appendChild(frame);
@@ -183,7 +196,7 @@ function renderNodes(context: RenderContext): void {
       parent,
       {
         x: layoutNode.x - subgraphLayout.x,
-        y: layoutNode.y - subgraphLayout.y + subgraphTitleHeight,
+        y: layoutNode.y - subgraphLayout.y + getSubgraphTitleHeight(node.subgraphId ?? "", context),
       },
       context,
     );
@@ -297,7 +310,10 @@ function createTextLayer(name: string, characters: string, context: RenderContex
   text.fontName = context.settings.fontName;
   text.fontSize = context.settings.fontSize;
   text.fills = [textFill];
-  text.characters = characters;
+  applyMermaidLabelToTextNode(text, characters, {
+    baseFontName: context.settings.fontName,
+    boldFontName: context.boldFontName,
+  });
   return text;
 }
 
@@ -310,6 +326,70 @@ function resolveRenderSettings(settings: Partial<RenderSettings> | undefined): R
   };
 }
 
+function getSubgraphTitleHeights(
+  diagram: DiagramModel,
+  settings: RenderSettings,
+): Map<string, number> {
+  return new Map(
+    diagram.subgraphs.map((subgraph) => [
+      subgraph.id,
+      getSubgraphTitleHeightForLabel(subgraph.label, settings),
+    ]),
+  );
+}
+
+function getSubgraphTitleHeight(id: string, context: RenderContext): number {
+  return context.subgraphTitleHeights.get(id) ?? subgraphTitleHeight;
+}
+
+function getSubgraphTitleHeightForLabel(label: string, settings: RenderSettings): number {
+  const titleBox = estimateMultilineTextBox(label, {
+    fontSize: settings.fontSize,
+    horizontalPadding: 0,
+    minHeight: 18,
+    minWidth: 1,
+    verticalPadding: 0,
+  });
+
+  return Math.max(subgraphTitleHeight, 10 + titleBox.height);
+}
+
+async function loadBoldFontName(diagram: DiagramModel, fontName: FontName): Promise<FontName> {
+  const boldFontName = resolveBoldFontName(fontName);
+
+  if (!diagramUsesBoldMarkup(diagram) || isSameFontName(fontName, boldFontName)) {
+    return fontName;
+  }
+
+  try {
+    await figma.loadFontAsync(boldFontName);
+    return boldFontName;
+  } catch {
+    return fontName;
+  }
+}
+
+function resolveBoldFontName(fontName: FontName): FontName {
+  return /bold/i.test(fontName.style)
+    ? fontName
+    : {
+        family: fontName.family,
+        style: "Bold",
+      };
+}
+
+function isSameFontName(left: FontName, right: FontName): boolean {
+  return left.family === right.family && left.style === right.style;
+}
+
+function diagramUsesBoldMarkup(diagram: DiagramModel): boolean {
+  return (
+    diagram.nodes.some((node) => /<b>/i.test(node.label)) ||
+    diagram.subgraphs.some((subgraph) => /<b>/i.test(subgraph.label)) ||
+    diagram.edges.some((edge) => edge.label && /<b>/i.test(edge.label))
+  );
+}
+
 function getRootNodePosition(
   layoutNode: DiagramLayoutNode,
   context: RenderContext,
@@ -320,7 +400,10 @@ function getRootNodePosition(
   };
 }
 
-function getRenderBounds(layout: DiagramLayoutResult): RenderBounds {
+function getRenderBounds(
+  layout: DiagramLayoutResult,
+  subgraphTitleHeights: Map<string, number>,
+): RenderBounds {
   const boxes = [
     ...layout.nodes.map((node) => ({
       minX: node.x,
@@ -332,7 +415,10 @@ function getRenderBounds(layout: DiagramLayoutResult): RenderBounds {
       minX: subgraph.x,
       minY: subgraph.y,
       maxX: subgraph.x + subgraph.width,
-      maxY: subgraph.y + subgraph.height + subgraphTitleHeight,
+      maxY:
+        subgraph.y +
+        subgraph.height +
+        (subgraphTitleHeights.get(subgraph.id) ?? subgraphTitleHeight),
     })),
   ];
 

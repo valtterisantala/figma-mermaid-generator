@@ -1,4 +1,5 @@
 import { Graph, layout as runDagreLayout, type EdgeLabel, type GraphLabel } from "@dagrejs/dagre";
+import { estimateMultilineTextBox } from "./text";
 import type {
   DiagramEdge,
   DiagramLayoutEdge,
@@ -97,11 +98,17 @@ export function layoutDiagram(
 
 function estimateNodeSize(node: DiagramNode): DagreNodeLabel {
   const minimum = minNodeSizeByShape[node.shape];
-  const labelWidth = Math.ceil(node.label.length * 7.5) + 32;
+  const labelBox = estimateMultilineTextBox(node.label, {
+    fontSize: 13,
+    horizontalPadding: 32,
+    minHeight: minimum.height,
+    minWidth: minimum.width,
+    verticalPadding: 20,
+  });
 
   return {
-    width: Math.max(minimum.width, labelWidth),
-    height: minimum.height,
+    width: labelBox.width,
+    height: labelBox.height,
   };
 }
 
@@ -114,11 +121,19 @@ function estimateEdgeLabel(edge: DiagramEdge): DagreEdgeLabel {
     };
   }
 
+  const labelBox = estimateMultilineTextBox(edge.label, {
+    fontSize: 12,
+    horizontalPadding: 20,
+    minHeight: 24,
+    minWidth: 20,
+    verticalPadding: 8,
+  });
+
   return {
     id: edge.id,
-    height: 24,
+    height: labelBox.height,
     labelpos: "c",
-    width: Math.ceil(edge.label.length * 7) + 20,
+    width: labelBox.width,
   };
 }
 
@@ -127,11 +142,17 @@ function estimateSubgraphEndpointSize(
   subgraphs: DiagramSubgraph[],
 ): DagreNodeLabel {
   const subgraph = subgraphs.find((entry) => entry.id === subgraphId);
-  const labelWidth = Math.ceil((subgraph?.label ?? subgraphId).length * 7.5) + 64;
+  const labelBox = estimateMultilineTextBox(subgraph?.label ?? subgraphId, {
+    fontSize: 13,
+    horizontalPadding: 64,
+    minHeight: 96,
+    minWidth: 160,
+    verticalPadding: 24,
+  });
 
   return {
-    width: Math.max(160, labelWidth),
-    height: 96,
+    width: labelBox.width,
+    height: labelBox.height,
   };
 }
 

@@ -145,6 +145,29 @@ candidate node"]`);
     ]);
   });
 
+  it("expands chained edge statements into sequential edges", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TD
+      A[Plan] --> B[Build] --> C[Test] --> D[Ship]`);
+
+    expect(diagram.edges).toEqual([
+      expect.objectContaining({ from: "A", to: "B" }),
+      expect.objectContaining({ from: "B", to: "C" }),
+      expect.objectContaining({ from: "C", to: "D" }),
+    ]);
+  });
+
+  it("keeps chained edges compatible with edge labels and fan-out targets", () => {
+    const diagram = parseMermaidFlowchart(`flowchart LR
+      A[Input] -->|normalize| B[Parser] & C[Validator] -->|publish| D[Model]`);
+
+    expect(diagram.edges).toEqual([
+      expect.objectContaining({ from: "A", to: "B", label: "normalize" }),
+      expect.objectContaining({ from: "A", to: "C", label: "normalize" }),
+      expect.objectContaining({ from: "B", to: "D", label: "publish" }),
+      expect.objectContaining({ from: "C", to: "D", label: "publish" }),
+    ]);
+  });
+
   it("supports subgraph declarations with readable titles", () => {
     const diagram = parseMermaidFlowchart(`flowchart TB
       subgraph Skills Layer
@@ -193,6 +216,24 @@ candidate node"]`);
         A[Input] --> B[Output]
       end
       H --> R1
+      R1 --> X[Next phase]`);
+
+    expect(diagram.subgraphs.find((subgraph) => subgraph.id === "R1")).toBeDefined();
+    expect(diagram.nodes.find((node) => node.id === "R1")).toBeUndefined();
+    expect(diagram.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ from: "H", to: "R1" }),
+        expect.objectContaining({ from: "R1", to: "X" }),
+      ]),
+    );
+  });
+
+  it("converts forward subgraph id edge references when the subgraph is later declared", () => {
+    const diagram = parseMermaidFlowchart(`flowchart LR
+      H[Hub] --> R1
+      subgraph R1[Research phase]
+        A[Input] --> B[Output]
+      end
       R1 --> X[Next phase]`);
 
     expect(diagram.subgraphs.find((subgraph) => subgraph.id === "R1")).toBeDefined();
@@ -263,15 +304,71 @@ candidate node"]`);
     expect(diagram.edges).toHaveLength(14);
   });
 
-  it("fails chained edge statements with a specific message", () => {
-    expect(() => parseMermaidFlowchart("flowchart TD\nA --> B --> C")).toThrow(
-      'Chained edge statements like "A --> B --> C" are not supported.',
-    );
-  });
-
   it("fails malformed fan-out statements with a specific message", () => {
     expect(() => parseMermaidFlowchart("flowchart TD\nA --> B &")).toThrow(
       "Fan-out edge list contains an empty node reference.",
+    );
+  });
+
+  it("fails unrelated Mermaid diagram families with a specific message", () => {
+    expect(() => parseMermaidFlowchart("sequenceDiagram\nA->>B: Hello")).toThrow(
+      'Unsupported Mermaid diagram type "sequenceDiagram".',
+    );
+  });
+
+  it("handles a practical OPK and skills map with chains, groups, and long labels", () => {
+    const diagram = parseMermaidFlowchart(`flowchart LR
+      OPK["<b>OPK</b><br/>Operating knowledge map"] --> Skills["Skills inventory<br/>Prompting, tools, review"] --> KB["Knowledge base<br/>Reusable examples"]
+
+      subgraph R1[Skill development phase]
+        direction LR
+        Skills --> Prompting["Prompt design"] & Tooling["Tool use"] & QA["Quality checks"]
+      end
+
+      KB --> Current["Current source notes"] & Future["Future branch candidates"] & Gaps["Known gaps"]`);
+
+    expect(diagram.nodes.find((node) => node.id === "OPK")?.label).toBe(
+      "<b>OPK</b><br/>Operating knowledge map",
+    );
+    expect(diagram.subgraphs.find((subgraph) => subgraph.id === "R1")?.direction).toBe("LR");
+    expect(diagram.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ from: "OPK", to: "Skills" }),
+        expect.objectContaining({ from: "Skills", to: "KB" }),
+        expect.objectContaining({ from: "Skills", to: "Prompting" }),
+        expect.objectContaining({ from: "KB", to: "Future" }),
+      ]),
+    );
+  });
+
+  it("handles a dense phase-style AI workflow map", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TB
+      Intake["Intake<br/>Goals, constraints, source docs"] --> Plan["Plan architecture"] --> Build["Build native plugin output"] --> Review["Review and polish"]
+
+      subgraph Phase1[Phase 1: Understand]
+        direction LR
+        Intake --> Context["Collect context"] & Risks["Identify risky assumptions"] & Scope["Keep flowchart-only scope"]
+      end
+
+      subgraph Phase2[Phase 2: Implement]
+        direction TD
+        Plan --> Parser["Parser normalization"] & Layout["Layout pass"] & Render["Native Figma render"]
+        Parser --> Tests["Focused parser tests"] --> Review
+      end
+
+      Review --> Ship["Ready for practical architecture, process, and knowledge maps"]`);
+
+    expect(diagram.subgraphs.map((subgraph) => subgraph.direction)).toEqual(["LR", "TD"]);
+    expect(diagram.nodes.find((node) => node.id === "Intake")?.label).toBe(
+      "Intake<br/>Goals, constraints, source docs",
+    );
+    expect(diagram.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ from: "Intake", to: "Plan" }),
+        expect.objectContaining({ from: "Plan", to: "Build" }),
+        expect.objectContaining({ from: "Build", to: "Review" }),
+        expect.objectContaining({ from: "Tests", to: "Review" }),
+      ]),
     );
   });
 });

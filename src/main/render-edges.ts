@@ -6,8 +6,10 @@ import type {
   DiagramModel,
   DiagramNode,
 } from "../core";
+import { estimateMultilineTextBox } from "./label-text";
 import { setEdgeMetadata } from "./metadata";
 import type { RenderSettings } from "./render";
+import { applyMermaidLabelToTextNode } from "./text-formatting";
 
 type EdgeRenderContext = {
   diagram: DiagramModel;
@@ -17,6 +19,8 @@ type EdgeRenderContext = {
   originX: number;
   originY: number;
   settings: RenderSettings;
+  boldFontName: FontName;
+  subgraphTitleHeights: Map<string, number>;
 };
 
 type Point = {
@@ -96,17 +100,27 @@ function createEdgePath(
 }
 
 function createEdgeLabel(label: string, position: Point, context: EdgeRenderContext): GroupNode {
+  const labelBox = estimateMultilineTextBox(label, {
+    fontSize: context.settings.fontSize,
+    horizontalPadding: 16,
+    minHeight: 22,
+    minWidth: 36,
+    verticalPadding: 10,
+  });
   const text = figma.createText();
   text.name = "Edge Label Text";
   text.fontName = context.settings.fontName;
   text.fontSize = context.settings.fontSize;
   text.fills = [edgeLabelFill];
-  text.characters = label;
+  applyMermaidLabelToTextNode(text, label, {
+    baseFontName: context.settings.fontName,
+    boldFontName: context.boldFontName,
+  });
   text.textAlignHorizontal = "CENTER";
   text.textAlignVertical = "CENTER";
 
-  const width = Math.max(36, Math.ceil(label.length * context.settings.fontSize * 0.58) + 16);
-  const height = Math.max(22, context.settings.fontSize + 10);
+  const width = labelBox.width;
+  const height = labelBox.height;
   text.resizeWithoutConstraints(width, height);
   text.x = position.x - width / 2;
   text.y = position.y - height / 2;
@@ -219,7 +233,7 @@ function getNodeBox(id: string, context: EdgeRenderContext): NodeBox | null {
     x: layoutSubgraph.x - context.originX,
     y: layoutSubgraph.y - context.originY,
     width: layoutSubgraph.width,
-    height: layoutSubgraph.height + subgraphTitleHeight,
+    height: layoutSubgraph.height + (context.subgraphTitleHeights.get(id) ?? subgraphTitleHeight),
   };
 }
 

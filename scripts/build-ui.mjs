@@ -96,7 +96,7 @@ ${css}
 
       <label class="field">
         <span>Corner radius</span>
-        <input id="corner-radius-input" type="number" min="0" max="32" step="1" value="8" />
+        <input id="corner-radius-input" type="number" min="0" max="32" step="1" value="20" />
       </label>
 
       <label class="toggle">
