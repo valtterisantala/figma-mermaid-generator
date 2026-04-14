@@ -23,6 +23,7 @@ type UiRenderSettings = {
   fontSize?: number;
   strokeWidth?: number;
   cornerRadius?: number;
+  lineCornerRadius?: number;
 };
 
 type RenderDiagramMessage = {
@@ -114,6 +115,12 @@ function getRenderSettings(settings: UiRenderSettings | undefined): RenderSettin
     fontSize: clampNumber(settings?.fontSize, defaultRenderSettings.fontSize, 8, 24),
     strokeWidth: clampNumber(settings?.strokeWidth, defaultRenderSettings.strokeWidth, 0.5, 12),
     cornerRadius: clampNumber(settings?.cornerRadius, defaultRenderSettings.cornerRadius, 0, 32),
+    lineCornerRadius: clampNumber(
+      settings?.lineCornerRadius,
+      defaultRenderSettings.lineCornerRadius,
+      0,
+      32,
+    ),
   };
 }
 

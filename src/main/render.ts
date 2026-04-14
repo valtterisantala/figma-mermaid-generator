@@ -37,6 +37,7 @@ export type RenderSettings = {
   fontSize: number;
   strokeWidth: number;
   cornerRadius: number;
+  lineCornerRadius: number;
 };
 
 const rootPadding = 48;
@@ -47,6 +48,7 @@ export const defaultRenderSettings: RenderSettings = {
   fontSize: 13,
   strokeWidth: 1,
   cornerRadius: 20,
+  lineCornerRadius: 12,
 };
 const rootFill: SolidPaint = { type: "SOLID", color: { r: 0.96, g: 0.97, b: 0.98 } };
 const subgraphFill: SolidPaint = {
@@ -335,6 +337,7 @@ function resolveRenderSettings(settings: Partial<RenderSettings> | undefined): R
     fontSize: settings?.fontSize ?? defaultRenderSettings.fontSize,
     strokeWidth: settings?.strokeWidth ?? defaultRenderSettings.strokeWidth,
     cornerRadius: settings?.cornerRadius ?? defaultRenderSettings.cornerRadius,
+    lineCornerRadius: settings?.lineCornerRadius ?? defaultRenderSettings.lineCornerRadius,
   };
 }
 

@@ -80,8 +80,14 @@ function createEdgePath(
   path.fills = [];
   path.strokes = [edgeStroke];
   path.strokeWeight = context.settings.strokeWidth;
+  path.strokeJoin = context.settings.lineCornerRadius > 0 ? "ROUND" : "MITER";
   path.strokeCap = edgeKind === "arrow" ? "ARROW_LINES" : "NONE";
   path.vectorNetwork = toVectorNetwork(points, edgeKind);
+
+  if ("cornerRadius" in path) {
+    path.cornerRadius = context.settings.lineCornerRadius;
+  }
+
   return path;
 }
 

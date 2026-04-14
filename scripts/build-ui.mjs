@@ -100,6 +100,11 @@ ${css}
         <input id="corner-radius-input" type="number" min="0" max="32" step="1" value="20" />
       </label>
 
+      <label class="field">
+        <span>Line corner radius</span>
+        <input id="line-corner-radius-input" type="number" min="0" max="32" step="1" value="12" />
+      </label>
+
       <label class="toggle">
         <input id="replace-previous" type="checkbox" checked />
         <span>Replace previous</span>

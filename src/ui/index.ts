@@ -7,6 +7,7 @@ type RenderSettings = {
   fontSize: number;
   strokeWidth: number;
   cornerRadius: number;
+  lineCornerRadius: number;
 };
 
 type PluginReadyMessage = {
@@ -40,6 +41,7 @@ const fontStyleSelect = document.querySelector<HTMLSelectElement>("#font-style-s
 const fontSizeInput = document.querySelector<HTMLInputElement>("#font-size-input");
 const strokeWidthInput = document.querySelector<HTMLInputElement>("#stroke-width-input");
 const cornerRadiusInput = document.querySelector<HTMLInputElement>("#corner-radius-input");
+const lineCornerRadiusInput = document.querySelector<HTMLInputElement>("#line-corner-radius-input");
 
 const settingsStorageKey = "mermaid-native-generator-render-settings";
 
@@ -48,7 +50,8 @@ const defaultRenderSettings: RenderSettings = {
   fontStyle: "Regular",
   fontSize: 13,
   strokeWidth: 1,
-  cornerRadius: 20,
+  cornerRadius: 40,
+  lineCornerRadius: 20,
 };
 
 const sampleMermaid = `flowchart TD
@@ -108,6 +111,12 @@ const getRenderSettings = (): RenderSettings => ({
   fontSize: clampNumber(fontSizeInput?.value, defaultRenderSettings.fontSize, 8, 24),
   strokeWidth: clampNumber(strokeWidthInput?.value, defaultRenderSettings.strokeWidth, 0.5, 12),
   cornerRadius: clampNumber(cornerRadiusInput?.value, defaultRenderSettings.cornerRadius, 0, 32),
+  lineCornerRadius: clampNumber(
+    lineCornerRadiusInput?.value,
+    defaultRenderSettings.lineCornerRadius,
+    0,
+    32,
+  ),
 });
 
 const applyRenderSettings = (settings: RenderSettings) => {
@@ -129,6 +138,10 @@ const applyRenderSettings = (settings: RenderSettings) => {
 
   if (cornerRadiusInput) {
     cornerRadiusInput.value = String(settings.cornerRadius);
+  }
+
+  if (lineCornerRadiusInput) {
+    lineCornerRadiusInput.value = String(settings.lineCornerRadius);
   }
 };
 
@@ -154,6 +167,12 @@ const loadRenderSettings = () => {
       cornerRadius: clampNumber(
         String(parsed.cornerRadius),
         defaultRenderSettings.cornerRadius,
+        0,
+        32,
+      ),
+      lineCornerRadius: clampNumber(
+        String(parsed.lineCornerRadius),
+        defaultRenderSettings.lineCornerRadius,
         0,
         32,
       ),
