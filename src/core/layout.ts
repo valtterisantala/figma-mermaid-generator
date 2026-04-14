@@ -231,6 +231,7 @@ function normalizeRepeatedParallelStages(
   }
 
   const nodeById = new Map(nodes.map((node) => [node.id, { ...node }]));
+  const declarationOrder = new Map(diagram.nodes.map((node, index) => [node.id, index]));
 
   for (const motif of motifs) {
     const sourceNode = nodeById.get(motif.sourceId);
@@ -256,9 +257,22 @@ function normalizeRepeatedParallelStages(
     }
 
     const centerColumn = round((sourceRight + targetLeft) / 2);
+    const sortedCenterYs = middleNodes
+      .map((node) => node.y + node.height / 2)
+      .sort((left, right) => left - right);
+    const orderedMiddleNodes = [...middleNodes].sort((left, right) => {
+      const leftIndex = declarationOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+      const rightIndex = declarationOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+      return leftIndex - rightIndex;
+    });
 
-    for (const middleNode of middleNodes) {
+    for (const [index, middleNode] of orderedMiddleNodes.entries()) {
       middleNode.x = round(centerColumn - middleNode.width / 2);
+      const centerY = sortedCenterYs[index];
+
+      if (centerY !== undefined) {
+        middleNode.y = round(centerY - middleNode.height / 2);
+      }
     }
   }
 

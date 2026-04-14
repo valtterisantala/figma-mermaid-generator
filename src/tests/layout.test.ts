@@ -358,5 +358,10 @@ describe("layoutDiagram", () => {
     const targetLeft = target?.x ?? 0;
     expect(firstCenter).toBeGreaterThan(sourceRight);
     expect(firstCenter).toBeLessThan(targetLeft);
+
+    const middleOrderByY = [...middleNodes]
+      .sort((left, right) => left.y - right.y)
+      .map((node) => node.id);
+    expect(middleOrderByY).toEqual(["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9"]);
   });
 });
