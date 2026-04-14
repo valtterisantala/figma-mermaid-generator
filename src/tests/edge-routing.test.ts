@@ -39,4 +39,15 @@ describe("buildOrthogonalPath", () => {
     expect(path.length).toBeGreaterThanOrEqual(4);
     expect(path.some((point) => point.x === 130)).toBe(true);
   });
+
+  it("supports forcing right-to-left anchors for LR parallel-stage routing", () => {
+    const path = buildOrthogonalPath(rectangle("A", 0, 120), rectangle("B", 260, 0), [], {
+      startSide: "right",
+      endSide: "left",
+    });
+
+    expect(isOrthogonalPath(path)).toBe(true);
+    expect(path[0].x).toBe(120);
+    expect(path[path.length - 1].x).toBe(260);
+  });
 });

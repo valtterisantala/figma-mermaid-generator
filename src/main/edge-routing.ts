@@ -14,17 +14,27 @@ export type NodeBox = {
   height: number;
 };
 
-type EdgeSide = "left" | "right" | "top" | "bottom";
+export type EdgeSide = "left" | "right" | "top" | "bottom";
+
+type PathSideOverrides = {
+  startSide?: EdgeSide;
+  endSide?: EdgeSide;
+};
 
 const defaultStubLength = 20;
 
-export function buildOrthogonalPath(from: NodeBox, to: NodeBox, routeHints: Point[]): Point[] {
+export function buildOrthogonalPath(
+  from: NodeBox,
+  to: NodeBox,
+  routeHints: Point[],
+  sideOverrides: PathSideOverrides = {},
+): Point[] {
   const fromCenter = getCenter(from);
   const toCenter = getCenter(to);
   const startHint = routeHints[0] ?? toCenter;
   const endHint = routeHints[routeHints.length - 1] ?? fromCenter;
-  const startSide = chooseSide(fromCenter, startHint);
-  const endSide = chooseSide(toCenter, endHint);
+  const startSide = sideOverrides.startSide ?? chooseSide(fromCenter, startHint);
+  const endSide = sideOverrides.endSide ?? chooseSide(toCenter, endHint);
   const start = getBoundaryPointForSide(from, startSide);
   const end = getBoundaryPointForSide(to, endSide);
   const startStub = offsetPoint(start, startSide, defaultStubLength);

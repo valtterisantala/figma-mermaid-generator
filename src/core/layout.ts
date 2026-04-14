@@ -87,7 +87,8 @@ export function layoutDiagram(
   const edges = diagram.edges.map((edge) =>
     toLayoutEdge(edge, graph.edge(edge.from, edge.to, edge.id)),
   );
-  const normalizedNodes = normalizeRepeatedPhaseMotifs(diagram, nodes);
+  const repeatedPhaseNormalizedNodes = normalizeRepeatedPhaseMotifs(diagram, nodes);
+  const normalizedNodes = normalizeRepeatedParallelStages(diagram, repeatedPhaseNormalizedNodes);
   const subgraphs = diagram.subgraphs.map((subgraph) =>
     toLayoutSubgraph(subgraph, normalizedNodes, edges, resolvedOptions.subgraphPadding),
   );
@@ -120,6 +121,12 @@ type PhaseMotif = {
   phaseId: string;
   middleIds: [string, string];
   outputId: string;
+};
+
+type ParallelStageMotif = {
+  sourceId: string;
+  targetId: string;
+  middleIds: string[];
 };
 
 function normalizeRepeatedPhaseMotifs(
@@ -204,6 +211,115 @@ function findRepeatedPhaseMotifs(diagram: DiagramModel): PhaseMotif[] {
       outputId,
     });
     seenOutputs.add(outputId);
+  }
+
+  return motifs;
+}
+
+function normalizeRepeatedParallelStages(
+  diagram: DiagramModel,
+  nodes: DiagramLayoutNode[],
+): DiagramLayoutNode[] {
+  if (diagram.direction !== "LR") {
+    return nodes;
+  }
+
+  const motifs = findRepeatedParallelStageMotifs(diagram);
+
+  if (motifs.length === 0) {
+    return nodes;
+  }
+
+  const nodeById = new Map(nodes.map((node) => [node.id, { ...node }]));
+
+  for (const motif of motifs) {
+    const sourceNode = nodeById.get(motif.sourceId);
+    const targetNode = nodeById.get(motif.targetId);
+
+    if (!sourceNode || !targetNode) {
+      continue;
+    }
+
+    const middleNodes = motif.middleIds
+      .map((id) => nodeById.get(id))
+      .filter((node): node is DiagramLayoutNode => Boolean(node));
+
+    if (middleNodes.length < 3) {
+      continue;
+    }
+
+    const sourceRight = sourceNode.x + sourceNode.width;
+    const targetLeft = targetNode.x;
+
+    if (targetLeft <= sourceRight) {
+      continue;
+    }
+
+    const centerColumn = round((sourceRight + targetLeft) / 2);
+
+    for (const middleNode of middleNodes) {
+      middleNode.x = round(centerColumn - middleNode.width / 2);
+    }
+  }
+
+  return nodes.map((node) => nodeById.get(node.id) ?? node);
+}
+
+function findRepeatedParallelStageMotifs(diagram: DiagramModel): ParallelStageMotif[] {
+  const nodeIds = new Set(diagram.nodes.map((node) => node.id));
+  const outgoingTargetsByNode = new Map<string, Set<string>>();
+
+  for (const edge of diagram.edges) {
+    if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
+      continue;
+    }
+
+    const targets = outgoingTargetsByNode.get(edge.from) ?? new Set<string>();
+    targets.add(edge.to);
+    outgoingTargetsByNode.set(edge.from, targets);
+  }
+
+  const middleIdsByStage = new Map<string, Set<string>>();
+
+  for (const [sourceId, targets] of outgoingTargetsByNode) {
+    for (const middleId of targets) {
+      const middleTargets = outgoingTargetsByNode.get(middleId);
+
+      if (!middleTargets || middleTargets.size === 0) {
+        continue;
+      }
+
+      for (const targetId of middleTargets) {
+        if (sourceId === middleId || middleId === targetId || sourceId === targetId) {
+          continue;
+        }
+
+        const key = `${sourceId}::${targetId}`;
+        const middleIds = middleIdsByStage.get(key) ?? new Set<string>();
+        middleIds.add(middleId);
+        middleIdsByStage.set(key, middleIds);
+      }
+    }
+  }
+
+  const motifs: ParallelStageMotif[] = [];
+
+  for (const [stageKey, middleIds] of middleIdsByStage) {
+    if (middleIds.size < 3) {
+      continue;
+    }
+
+    const [sourceId, targetId] = stageKey.split("::");
+
+    if (!sourceId || !targetId) {
+      continue;
+    }
+
+    motifs.push({
+      sourceId,
+      targetId,
+      middleIds: [...middleIds],
+    });
   }
 
   return motifs;

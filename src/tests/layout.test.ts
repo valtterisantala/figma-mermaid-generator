@@ -36,6 +36,29 @@ const repeatedPhaseFixture = `flowchart LR
   H3 --> O3
   A3 --> O3`;
 
+const repeatedParallelStageFixture = `flowchart LR
+  A["Drone registration"]
+  B["Flight session starts"]
+  A1["Airspace review"] 
+  A2["Weather check"]
+  A3["Battery check"]
+  A4["Firmware check"]
+  A5["Sensor calibration"]
+  A6["Mission checklist"]
+  A7["Geofence validation"]
+  A8["Pilot confirmation"]
+  A9["Safety acknowledgement"]
+
+  A --> A1 --> B
+  A --> A2 --> B
+  A --> A3 --> B
+  A --> A4 --> B
+  A --> A5 --> B
+  A --> A6 --> B
+  A --> A7 --> B
+  A --> A8 --> B
+  A --> A9 --> B`;
+
 describe("layoutDiagram", () => {
   it("produces deterministic coordinates and edge routes for TD graphs", () => {
     const diagram = parseMermaidFlowchart(basicFlowchart);
@@ -309,5 +332,31 @@ describe("layoutDiagram", () => {
     expect(human?.y).toBeGreaterThan(phase?.y ?? 0);
     expect(ai?.y).toBeGreaterThan(phase?.y ?? 0);
     expect(output?.y).toBeGreaterThan(Math.min(human?.y ?? 0, ai?.y ?? 0));
+  });
+
+  it("keeps repeated LR parallel-stage middle nodes in one shared column", () => {
+    const diagram = parseMermaidFlowchart(repeatedParallelStageFixture);
+    const layout = layoutDiagram(diagram);
+    const source = layout.nodes.find((node) => node.id === "A");
+    const target = layout.nodes.find((node) => node.id === "B");
+    const middleNodes = layout.nodes
+      .filter((node) => /^A[1-9]$/.test(node.id))
+      .sort((left, right) => left.id.localeCompare(right.id));
+
+    expect(source).toBeDefined();
+    expect(target).toBeDefined();
+    expect(middleNodes).toHaveLength(9);
+
+    const centerXs = middleNodes.map((node) => node.x + node.width / 2);
+    const firstCenter = centerXs[0];
+
+    for (const centerX of centerXs) {
+      expect(centerX).toBe(firstCenter);
+    }
+
+    const sourceRight = (source?.x ?? 0) + (source?.width ?? 0);
+    const targetLeft = target?.x ?? 0;
+    expect(firstCenter).toBeGreaterThan(sourceRight);
+    expect(firstCenter).toBeLessThan(targetLeft);
   });
 });

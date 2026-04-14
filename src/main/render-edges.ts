@@ -5,7 +5,7 @@ import type {
   DiagramLayoutResult,
   DiagramModel,
 } from "../core";
-import { buildOrthogonalPath, type NodeBox, type Point } from "./edge-routing";
+import { buildOrthogonalPath, type EdgeSide, type NodeBox, type Point } from "./edge-routing";
 import { estimateMultilineTextBox } from "./label-text";
 import { setEdgeMetadata } from "./metadata";
 import type { RenderSettings } from "./render";
@@ -38,9 +38,16 @@ const edgeLabelBackground: SolidPaint = {
 const subgraphTitleHeight = 28;
 
 export function renderEdges(context: EdgeRenderContext): void {
+  const parallelStageEdgeSides = getParallelStageEdgeSideOverrides(context.diagram);
+
   for (const edge of context.diagram.edges) {
     const layoutEdge = getLayoutEdge(edge.id, context.layout);
-    const geometry = getEdgeGeometry(edge, layoutEdge, context);
+    const geometry = getEdgeGeometry(
+      edge,
+      layoutEdge,
+      context,
+      parallelStageEdgeSides.get(edge.id),
+    );
 
     if (!geometry) {
       continue;
@@ -139,6 +146,7 @@ function getEdgeGeometry(
   edge: DiagramEdge,
   layoutEdge: DiagramLayoutEdge,
   context: EdgeRenderContext,
+  sideOverrides: { startSide?: EdgeSide; endSide?: EdgeSide } | undefined,
 ): EdgeGeometry | null {
   const from = getNodeBox(edge.from, context);
   const to = getNodeBox(edge.to, context);
@@ -148,12 +156,89 @@ function getEdgeGeometry(
   }
 
   const routePoints = layoutEdge.points.map((point) => toRootPoint(point, context));
-  const pathPoints = buildOrthogonalPath(from, to, routePoints);
+  const pathPoints = buildOrthogonalPath(from, to, routePoints, sideOverrides);
 
   return {
     pathPoints,
     labelPosition: getLabelPosition(layoutEdge, pathPoints, context),
   };
+}
+
+function getParallelStageEdgeSideOverrides(
+  diagram: DiagramModel,
+): Map<string, { startSide: EdgeSide; endSide: EdgeSide }> {
+  if (diagram.direction !== "LR") {
+    return new Map();
+  }
+
+  const nodeIds = new Set(diagram.nodes.map((node) => node.id));
+  const outgoingByNode = new Map<string, Set<string>>();
+  const edgeByPair = new Map<string, DiagramEdge>();
+
+  for (const edge of diagram.edges) {
+    if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
+      continue;
+    }
+
+    const targets = outgoingByNode.get(edge.from) ?? new Set<string>();
+    targets.add(edge.to);
+    outgoingByNode.set(edge.from, targets);
+    edgeByPair.set(`${edge.from}::${edge.to}`, edge);
+  }
+
+  const middleIdsByStage = new Map<string, Set<string>>();
+
+  for (const [sourceId, targets] of outgoingByNode) {
+    for (const middleId of targets) {
+      const middleTargets = outgoingByNode.get(middleId);
+
+      if (!middleTargets || middleTargets.size === 0) {
+        continue;
+      }
+
+      for (const targetId of middleTargets) {
+        if (targetId === sourceId || middleId === sourceId || middleId === targetId) {
+          continue;
+        }
+
+        const stageKey = `${sourceId}::${targetId}`;
+        const stageMiddles = middleIdsByStage.get(stageKey) ?? new Set<string>();
+        stageMiddles.add(middleId);
+        middleIdsByStage.set(stageKey, stageMiddles);
+      }
+    }
+  }
+
+  const overrides = new Map<string, { startSide: EdgeSide; endSide: EdgeSide }>();
+
+  for (const [stageKey, middleIds] of middleIdsByStage) {
+    if (middleIds.size < 3) {
+      continue;
+    }
+
+    const [sourceId, targetId] = stageKey.split("::");
+
+    for (const middleId of middleIds) {
+      const ingress = edgeByPair.get(`${sourceId}::${middleId}`);
+      const egress = edgeByPair.get(`${middleId}::${targetId}`);
+
+      if (ingress) {
+        overrides.set(ingress.id, {
+          startSide: "right",
+          endSide: "left",
+        });
+      }
+
+      if (egress) {
+        overrides.set(egress.id, {
+          startSide: "right",
+          endSide: "left",
+        });
+      }
+    }
+  }
+
+  return overrides;
 }
 
 function getLabelPosition(
