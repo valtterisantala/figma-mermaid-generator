@@ -2,6 +2,40 @@ import { describe, expect, it } from "vitest";
 import { basicFlowchart } from "../fixtures/basic-flowchart";
 import { estimateMultilineTextBox, layoutDiagram, parseMermaidFlowchart } from "../core";
 
+const repeatedPhaseFixture = `flowchart LR
+
+  P1["<b>Early phase</b>"]
+  H1["<b>Human role</b><br/>Defines the problem<br/>Challenges assumptions<br/>Selects direction"]
+  A1["<b>AI support</b><br/>Structures material<br/>Surfaces gaps<br/>Generates alternatives"]
+  O1["<b>Output</b><br/>Clearer brief<br/>Faster concepting<br/>Better alignment"]
+
+  P2["<b>Build phase</b>"]
+  H2["<b>Human role</b><br/>Makes architecture decisions<br/>Reviews quality<br/>Prioritises what ships"]
+  A2["<b>AI support</b><br/>Assists with code generation<br/>Supports implementation work<br/>Helps with testing and documentation"]
+  O2["<b>Output</b><br/>Faster iteration<br/>More time for high-value decisions<br/>Better-supported delivery"]
+
+  P3["<b>Live phase</b>"]
+  H3["<b>Human role</b><br/>Defines boundaries<br/>Evaluates usefulness<br/>Improves based on real use"]
+  A3["<b>AI support</b><br/>Powers services<br/>Supports workflows<br/>Helps process feedback"]
+  O3["<b>Output</b><br/>More useful services<br/>Better continuity<br/>Continuous improvement"]
+
+  P1 --> H1
+  P1 --> A1
+  H1 --> O1
+  A1 --> O1
+
+  O1 --> P2
+  P2 --> H2
+  P2 --> A2
+  H2 --> O2
+  A2 --> O2
+
+  O2 --> P3
+  P3 --> H3
+  P3 --> A3
+  H3 --> O3
+  A3 --> O3`;
+
 describe("layoutDiagram", () => {
   it("produces deterministic coordinates and edge routes for TD graphs", () => {
     const diagram = parseMermaidFlowchart(basicFlowchart);
@@ -234,5 +268,46 @@ describe("layoutDiagram", () => {
     expect(estimated.text.split("\n").length).toBeGreaterThanOrEqual(3);
     expect(node?.width).toBeLessThanOrEqual(252);
     expect(node?.height).toBe(estimated.height);
+  });
+
+  it("keeps repeated LR phase motifs in a consistent middle-node column", () => {
+    const diagram = parseMermaidFlowchart(repeatedPhaseFixture);
+    const layout = layoutDiagram(diagram);
+    const phaseGroups: Array<[string, string, string]> = [
+      ["H1", "A1", "O1"],
+      ["H2", "A2", "O2"],
+      ["H3", "A3", "O3"],
+    ];
+
+    for (const [humanId, aiId, outputId] of phaseGroups) {
+      const human = layout.nodes.find((node) => node.id === humanId);
+      const ai = layout.nodes.find((node) => node.id === aiId);
+      const output = layout.nodes.find((node) => node.id === outputId);
+
+      expect(human).toBeDefined();
+      expect(ai).toBeDefined();
+      expect(output).toBeDefined();
+      expect((human?.x ?? 0) + (human?.width ?? 0)).toBe((ai?.x ?? 0) + (ai?.width ?? 0));
+      expect(output?.x).toBeGreaterThan(Math.max(human?.x ?? 0, ai?.x ?? 0));
+    }
+  });
+
+  it("leaves the repeated phase motif vertical in TD diagrams", () => {
+    const diagram = parseMermaidFlowchart(
+      repeatedPhaseFixture.replace("flowchart LR", "flowchart TD"),
+    );
+    const layout = layoutDiagram(diagram);
+    const phase = layout.nodes.find((node) => node.id === "P1");
+    const human = layout.nodes.find((node) => node.id === "H1");
+    const ai = layout.nodes.find((node) => node.id === "A1");
+    const output = layout.nodes.find((node) => node.id === "O1");
+
+    expect(phase).toBeDefined();
+    expect(human).toBeDefined();
+    expect(ai).toBeDefined();
+    expect(output).toBeDefined();
+    expect(human?.y).toBeGreaterThan(phase?.y ?? 0);
+    expect(ai?.y).toBeGreaterThan(phase?.y ?? 0);
+    expect(output?.y).toBeGreaterThan(Math.min(human?.y ?? 0, ai?.y ?? 0));
   });
 });

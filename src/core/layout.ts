@@ -87,12 +87,13 @@ export function layoutDiagram(
   const edges = diagram.edges.map((edge) =>
     toLayoutEdge(edge, graph.edge(edge.from, edge.to, edge.id)),
   );
+  const normalizedNodes = normalizeRepeatedPhaseMotifs(diagram, nodes);
   const subgraphs = diagram.subgraphs.map((subgraph) =>
-    toLayoutSubgraph(subgraph, nodes, edges, resolvedOptions.subgraphPadding),
+    toLayoutSubgraph(subgraph, normalizedNodes, edges, resolvedOptions.subgraphPadding),
   );
 
   return {
-    nodes,
+    nodes: normalizedNodes,
     edges,
     subgraphs,
   };
@@ -113,6 +114,99 @@ function estimateNodeSize(node: DiagramNode): DagreNodeLabel {
     width: labelBox.width,
     height: labelBox.height,
   };
+}
+
+type PhaseMotif = {
+  phaseId: string;
+  middleIds: [string, string];
+  outputId: string;
+};
+
+function normalizeRepeatedPhaseMotifs(
+  diagram: DiagramModel,
+  nodes: DiagramLayoutNode[],
+): DiagramLayoutNode[] {
+  if (diagram.direction !== "LR") {
+    return nodes;
+  }
+
+  const motifs = findRepeatedPhaseMotifs(diagram);
+
+  if (motifs.length === 0) {
+    return nodes;
+  }
+
+  const nodeById = new Map(nodes.map((node) => [node.id, { ...node }]));
+
+  for (const motif of motifs) {
+    const middleNodes = motif.middleIds
+      .map((id) => nodeById.get(id))
+      .filter((node): node is DiagramLayoutNode => Boolean(node));
+
+    if (middleNodes.length !== 2) {
+      continue;
+    }
+
+    const sharedRightEdge = Math.max(...middleNodes.map((node) => node.x + node.width));
+
+    for (const node of middleNodes) {
+      node.x = round(sharedRightEdge - node.width);
+    }
+  }
+
+  return nodes.map((node) => nodeById.get(node.id) ?? node);
+}
+
+function findRepeatedPhaseMotifs(diagram: DiagramModel): PhaseMotif[] {
+  const nodeIds = new Set(diagram.nodes.map((node) => node.id));
+  const outgoingTargetsByNode = new Map<string, Set<string>>();
+
+  for (const edge of diagram.edges) {
+    if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
+      continue;
+    }
+
+    const targets = outgoingTargetsByNode.get(edge.from) ?? new Set<string>();
+    targets.add(edge.to);
+    outgoingTargetsByNode.set(edge.from, targets);
+  }
+
+  const motifs: PhaseMotif[] = [];
+  const seenOutputs = new Set<string>();
+
+  for (const node of diagram.nodes) {
+    const outgoingTargets = [...(outgoingTargetsByNode.get(node.id) ?? new Set<string>())];
+
+    if (outgoingTargets.length !== 2) {
+      continue;
+    }
+
+    const [firstMiddleId, secondMiddleId] = outgoingTargets;
+    const firstMiddleTargets = outgoingTargetsByNode.get(firstMiddleId) ?? new Set<string>();
+    const secondMiddleTargets = outgoingTargetsByNode.get(secondMiddleId) ?? new Set<string>();
+    const sharedOutputs = [...firstMiddleTargets].filter((targetId) =>
+      secondMiddleTargets.has(targetId),
+    );
+
+    if (sharedOutputs.length !== 1) {
+      continue;
+    }
+
+    const outputId = sharedOutputs[0];
+
+    if (seenOutputs.has(outputId)) {
+      continue;
+    }
+
+    motifs.push({
+      phaseId: node.id,
+      middleIds: [outgoingTargets[0], outgoingTargets[1]],
+      outputId,
+    });
+    seenOutputs.add(outputId);
+  }
+
+  return motifs;
 }
 
 function isBoxLikeShape(shape: DiagramNode["shape"]): boolean {
