@@ -35,9 +35,19 @@ type RenderDiagramMessage = {
   settings?: UiRenderSettings;
 };
 
-type UiMessage = RenderDiagramMessage;
+type UiResizeMessage = {
+  type: "ui-resize";
+  height: number;
+};
+
+type UiMessage = RenderDiagramMessage | UiResizeMessage;
 
 figma.ui.onmessage = async (message: UiMessage) => {
+  if (message.type === "ui-resize") {
+    figma.ui.resize(420, clampNumber(message.height, 680, 320, 10000));
+    return;
+  }
+
   if (message.type !== "render-diagram") {
     return;
   }

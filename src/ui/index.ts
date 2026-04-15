@@ -60,6 +60,32 @@ const sampleMermaid = `flowchart TD
   Decision -->|No| Revise[Revise input]
   Revise --> Decision`;
 
+let resizeRafId: number | null = null;
+
+const postUiResize = () => {
+  const nextHeight = Math.ceil(document.documentElement.scrollHeight);
+  parent.postMessage(
+    {
+      pluginMessage: {
+        type: "ui-resize",
+        height: nextHeight,
+      },
+    },
+    "*",
+  );
+};
+
+const scheduleUiResize = () => {
+  if (resizeRafId !== null) {
+    return;
+  }
+
+  resizeRafId = window.requestAnimationFrame(() => {
+    resizeRafId = null;
+    postUiResize();
+  });
+};
+
 const setStatus = (message: string) => {
   if (statusElement) {
     statusElement.textContent = message;
@@ -221,6 +247,16 @@ const postRenderMessage = () => {
 
 loadRenderSettings();
 renderButton?.addEventListener("click", postRenderMessage);
+window.addEventListener("load", scheduleUiResize);
+window.addEventListener("resize", scheduleUiResize);
+mermaidInput?.addEventListener("input", scheduleUiResize);
+if ("ResizeObserver" in window) {
+  const observer = new ResizeObserver(() => {
+    scheduleUiResize();
+  });
+  observer.observe(document.body);
+}
+scheduleUiResize();
 
 sampleButton?.addEventListener("click", () => {
   if (mermaidInput) {
@@ -230,6 +266,7 @@ sampleButton?.addEventListener("click", () => {
 
   setError(null);
   setStatus("Sample input ready.");
+  scheduleUiResize();
 });
 
 window.onmessage = (event: MessageEvent<{ pluginMessage?: PluginMessage }>) => {
@@ -241,18 +278,21 @@ window.onmessage = (event: MessageEvent<{ pluginMessage?: PluginMessage }>) => {
 
   if (message.type === "plugin-ready") {
     setStatus(message.message);
+    scheduleUiResize();
     return;
   }
 
   if (message.type === "render-error") {
     setError(message.message);
     setStatus("Render failed.");
+    scheduleUiResize();
     return;
   }
 
   if (message.type === "render-complete") {
     setError(null);
     setStatus(message.message);
+    scheduleUiResize();
   }
 };
 
