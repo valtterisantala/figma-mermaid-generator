@@ -3,16 +3,18 @@ import { layoutDiagram, MermaidParseError, parseMermaidFlowchart } from "../core
 import { defaultRenderSettings, renderNativeNodes, type RenderSettings } from "./render";
 import { removePreviousRootAfterSuccessfulRender, resolveRenderTarget } from "./rerender";
 
+type FontCatalogEntry = {
+  family: string;
+  styles: string[];
+};
+
 figma.showUI(__html__, {
   width: 420,
   height: 680,
   themeColors: true,
 });
 
-figma.ui.postMessage({
-  type: "plugin-ready",
-  message: "Mermaid Native Generator is ready.",
-});
+void postInitialUiState();
 
 type DirectionOverride = "auto" | "TD" | "LR";
 type SpacingPreset = "compact" | "comfortable" | "spacious";
@@ -162,6 +164,48 @@ function getErrorMessage(error: unknown): string {
   }
 
   return "Unable to render diagram.";
+}
+
+async function postInitialUiState(): Promise<void> {
+  const fonts = await listLocalFonts();
+
+  figma.ui.postMessage({
+    type: "font-catalog",
+    fonts,
+  });
+  figma.ui.postMessage({
+    type: "plugin-ready",
+    message: "Mermaid Native Generator is ready.",
+  });
+}
+
+async function listLocalFonts(): Promise<FontCatalogEntry[]> {
+  try {
+    const availableFonts = await figma.listAvailableFontsAsync();
+    const stylesByFamily = new Map<string, Set<string>>();
+
+    for (const font of availableFonts) {
+      const family = font.fontName.family.trim();
+      const style = font.fontName.style.trim();
+
+      if (!family || !style) {
+        continue;
+      }
+
+      const styles = stylesByFamily.get(family) ?? new Set<string>();
+      styles.add(style);
+      stylesByFamily.set(family, styles);
+    }
+
+    return [...stylesByFamily.entries()]
+      .sort(([leftFamily], [rightFamily]) => leftFamily.localeCompare(rightFamily))
+      .map(([family, styles]) => ({
+        family,
+        styles: [...styles].sort((leftStyle, rightStyle) => leftStyle.localeCompare(rightStyle)),
+      }));
+  } catch {
+    return [];
+  }
 }
 
 export {};

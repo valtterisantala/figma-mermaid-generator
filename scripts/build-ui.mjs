@@ -65,20 +65,14 @@ ${css}
         <label class="field">
           <span>Font family</span>
           <select id="font-family-select">
-            <option value="FK Grotesk Neue Trial">FK Grotesk Neue Trial</option>
-            <option value="Aptos">Aptos</option>
-            <option value="Inter">Inter</option>
-            <option value="Arial">Arial</option>
-            <option value="Roboto">Roboto</option>
+            <option value="" disabled selected>Loading local fonts...</option>
           </select>
         </label>
 
         <label class="field">
           <span>Font style</span>
           <select id="font-style-select">
-            <option value="Regular">Regular</option>
-            <option value="Medium">Medium</option>
-            <option value="Bold">Bold</option>
+            <option value="" disabled selected>Select a family</option>
           </select>
         </label>
       </div>

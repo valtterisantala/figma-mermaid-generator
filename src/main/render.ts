@@ -69,7 +69,7 @@ export async function renderNativeNodes(
   },
 ): Promise<FrameNode> {
   const settings = resolveRenderSettings(options.settings);
-  await figma.loadFontAsync(settings.fontName);
+  await loadRequestedFont(settings.fontName);
   const boldFontName = await loadBoldFontName(diagram, settings.fontName);
 
   const subgraphTitleHeights = getSubgraphTitleHeights(diagram, settings);
@@ -97,6 +97,16 @@ export async function renderNativeNodes(
   figma.viewport.scrollAndZoomIntoView([rootFrame]);
 
   return rootFrame;
+}
+
+async function loadRequestedFont(fontName: FontName): Promise<void> {
+  try {
+    await figma.loadFontAsync(fontName);
+  } catch {
+    throw new Error(
+      `Selected font "${fontName.family}" with style "${fontName.style}" is not available in this file.`,
+    );
+  }
 }
 
 function createRootFrame(
