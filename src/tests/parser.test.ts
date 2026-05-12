@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { basicFlowchart } from "../fixtures/basic-flowchart";
-import { classStylingFlowchart } from "../fixtures";
+import {
+  classStylingFlowchart,
+  heavyAssetPipelineComparison,
+  realtimeTouchEventComparison,
+  runtimeHostingAdvantages,
+  runtimeHostingArchitectureComparison,
+} from "../fixtures";
 import { MermaidParseError, parseMermaidFlowchart } from "../core";
 
 describe("parseMermaidFlowchart", () => {
@@ -50,6 +56,7 @@ describe("parseMermaidFlowchart", () => {
         sourceId: "Cluster",
         label: "Input cluster",
         parentId: undefined,
+        classIds: [],
         nodeIds: ["A", "B"],
         edgeIds: ["edge_1_A_to_B"],
       },
@@ -64,9 +71,14 @@ describe("parseMermaidFlowchart", () => {
     );
   });
 
-  it("rejects class assignments that reference unknown nodes", () => {
-    expect(() => parseMermaidFlowchart("flowchart TD\nclass Missing primary")).toThrow(
-      'Class assignment references unknown node "Missing".',
+  it("keeps unknown class assignments non-fatal and emits a warning", () => {
+    const diagram = parseMermaidFlowchart("flowchart TD\nA[Alpha]\nclass Missing primary");
+
+    expect(diagram.nodes).toHaveLength(1);
+    expect(diagram.metadata.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Class assignment references unknown id "Missing"'),
+      ]),
     );
   });
 
@@ -370,5 +382,68 @@ candidate node"]`);
         expect.objectContaining({ from: "Tests", to: "Review" }),
       ]),
     );
+  });
+
+  it("parses dotted edges as dashed connectors", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TB
+      A[Alpha] -.-> B[Beta]`);
+
+    expect(diagram.edges).toEqual([
+      expect.objectContaining({
+        from: "A",
+        to: "B",
+        dashed: true,
+      }),
+    ]);
+  });
+
+  it("applies class assignments to subgraph ids", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TB
+      subgraph col1[ ]
+        A[Alpha]
+      end
+      classDef frame fill:transparent,stroke:transparent;
+      class col1 frame;`);
+
+    expect(diagram.subgraphs[0]).toMatchObject({
+      id: "col1",
+      classIds: ["frame"],
+    });
+  });
+
+  it("imports the DNA runtime hosting architecture comparison fixture", () => {
+    const diagram = parseMermaidFlowchart(runtimeHostingArchitectureComparison);
+
+    expect(diagram.nodes.length).toBeGreaterThan(20);
+    expect(diagram.edges.length).toBeGreaterThan(20);
+    expect(diagram.subgraphs.length).toBeGreaterThan(10);
+    expect(diagram.edges.some((edge) => edge.dashed)).toBe(true);
+    expect(diagram.subgraphs.find((subgraph) => subgraph.id === "currentCol1")?.classIds).toContain(
+      "frame",
+    );
+  });
+
+  it("imports the DNA runtime hosting advantages fixture", () => {
+    const diagram = parseMermaidFlowchart(runtimeHostingAdvantages);
+
+    expect(diagram.direction).toBe("LR");
+    expect(diagram.nodes.length).toBeGreaterThan(10);
+    expect(diagram.subgraphs.length).toBe(3);
+  });
+
+  it("imports the DNA realtime touch event comparison fixture", () => {
+    const diagram = parseMermaidFlowchart(realtimeTouchEventComparison);
+
+    expect(diagram.nodes.length).toBeGreaterThan(10);
+    expect(diagram.edges.some((edge) => edge.label?.includes("live input"))).toBe(true);
+    expect(diagram.edges.some((edge) => edge.dashed)).toBe(true);
+  });
+
+  it("imports the DNA heavy asset pipeline comparison fixture", () => {
+    const diagram = parseMermaidFlowchart(heavyAssetPipelineComparison);
+
+    expect(diagram.nodes.length).toBeGreaterThan(10);
+    expect(diagram.edges.length).toBeGreaterThan(10);
+    expect(diagram.edges.some((edge) => edge.dashed)).toBe(true);
   });
 });

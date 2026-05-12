@@ -28,6 +28,7 @@ type ParseContext = {
   styles: Map<string, DiagramStyle>;
   classAssignments: Map<string, Set<string>>;
   subgraphStack: string[];
+  warnings: string[];
 };
 
 type ParsedNodeReference = {
@@ -79,6 +80,7 @@ export function parseMermaidFlowchart(source: string): DiagramModel {
     styles: new Map(),
     classAssignments: new Map(),
     subgraphStack: [],
+    warnings: [],
   };
 
   for (const statement of collectStatements(lines, header.index + 1)) {
@@ -101,6 +103,7 @@ export function parseMermaidFlowchart(source: string): DiagramModel {
     metadata: {
       sourceHash: stableHash(source),
       generatorVersion: "0.1.0",
+      warnings: context.warnings.length > 0 ? context.warnings : undefined,
     },
   };
 }
@@ -185,7 +188,26 @@ function parseStatement(rawLine: string, lineNumber: number, context: ParseConte
     return;
   }
 
-  parseNodeStatement(statement, lineNumber, context);
+  try {
+    parseNodeStatement(statement, lineNumber, context);
+  } catch (error) {
+    if (
+      error instanceof MermaidParseError &&
+      (error.message.includes("Unsupported node reference") ||
+        error.message.includes("Expected node id"))
+    ) {
+      addWarning(`Ignored unsupported statement "${statement}".`, lineNumber, context);
+      return;
+    }
+
+    throw error;
+  }
+}
+
+function addWarning(message: string, lineNumber: number | undefined, context: ParseContext): void {
+  const warning = lineNumber ? `Line ${lineNumber}: ${message}` : message;
+  context.warnings.push(warning);
+  console.warn(`[Mermaid parser warning] ${warning}`);
 }
 
 function parseSubgraph(statement: string, lineNumber: number, context: ParseContext): void {
@@ -205,6 +227,7 @@ function parseSubgraph(statement: string, lineNumber: number, context: ParseCont
     sourceId: parsed.sourceId,
     label,
     parentId: getCurrentSubgraphId(context),
+    classIds: [],
     nodeIds: [],
     edgeIds: [],
   });
@@ -280,10 +303,40 @@ function parseClassDef(statement: string, lineNumber: number, context: ParseCont
   }
 
   const [, sourceId, declaration] = match;
+  const properties = parseStyleDeclaration(declaration);
+  warnUnsupportedClassDefProperties(sourceId, properties, lineNumber, context);
   context.styles.set(sourceId, {
     id: sourceId,
-    properties: parseStyleDeclaration(declaration),
+    properties,
   });
+}
+
+function warnUnsupportedClassDefProperties(
+  classId: string,
+  properties: Record<string, string>,
+  lineNumber: number,
+  context: ParseContext,
+): void {
+  const supportedProperties = new Set([
+    "fill",
+    "stroke",
+    "stroke-width",
+    "strokewidth",
+    "color",
+    "text-color",
+  ]);
+
+  for (const key of Object.keys(properties)) {
+    const normalized = key.trim().toLowerCase();
+
+    if (!supportedProperties.has(normalized)) {
+      addWarning(
+        `Unsupported classDef property "${key}" on "${classId}" was ignored.`,
+        lineNumber,
+        context,
+      );
+    }
+  }
 }
 
 function parseClassAssignment(statement: string, lineNumber: number, context: ParseContext): void {
@@ -332,6 +385,7 @@ function parseEdge(edgeParts: EdgeParts, lineNumber: number, context: ParseConte
         from: from.id,
         to: to.id,
         kind: edgeParts.marker.includes(">") ? "arrow" : ("line" satisfies EdgeKind),
+        dashed: edgeParts.marker.includes("."),
         label: label && label.length > 0 ? label : undefined,
         classIds: [],
         subgraphId: getCurrentSubgraphId(context),
@@ -583,7 +637,7 @@ function findTopLevelEdgeMarker(statement: string): { index: number; value: stri
     }
 
     const rest = statement.slice(index);
-    const marker = ["-->", "---", "--", "==>", "==="].find((candidate) =>
+    const marker = ["-.->", "-.-", "-->", "---", "--", "==>", "==="].find((candidate) =>
       rest.startsWith(candidate),
     );
 
@@ -787,12 +841,38 @@ function parseStyleDeclaration(declaration: string): Record<string, string> {
 function applyClassAssignments(context: ParseContext): void {
   for (const [nodeId, classIds] of context.classAssignments) {
     const node = context.nodes.get(nodeId);
+    const subgraph = context.subgraphs.get(nodeId);
 
-    if (!node) {
-      throw new MermaidParseError(`Class assignment references unknown node "${nodeId}".`);
+    if (!node && !subgraph) {
+      addWarning(
+        `Class assignment references unknown id "${nodeId}" and was ignored.`,
+        undefined,
+        context,
+      );
+      continue;
     }
 
-    node.classIds = [...classIds];
+    const knownClassIds = [...classIds].filter((classId) => {
+      const isKnown = context.styles.has(classId);
+
+      if (!isKnown) {
+        addWarning(
+          `Class "${classId}" referenced by "${nodeId}" was not defined and was ignored.`,
+          undefined,
+          context,
+        );
+      }
+
+      return isKnown;
+    });
+
+    if (node) {
+      node.classIds = knownClassIds;
+    }
+
+    if (subgraph) {
+      subgraph.classIds = knownClassIds;
+    }
   }
 }
 

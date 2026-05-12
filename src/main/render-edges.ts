@@ -63,7 +63,7 @@ function createEdgeGroup(
   context: EdgeRenderContext,
 ): GroupNode {
   const edgeParts: SceneNode[] = [];
-  const path = createEdgePath(geometry.pathPoints, edge.kind, context);
+  const path = createEdgePath(geometry.pathPoints, edge, context);
   context.rootFrame.appendChild(path);
   edgeParts.push(path);
 
@@ -79,7 +79,7 @@ function createEdgeGroup(
 
 function createEdgePath(
   points: Point[],
-  edgeKind: DiagramEdge["kind"],
+  edge: DiagramEdge,
   context: EdgeRenderContext,
 ): VectorNode {
   const path = figma.createVector();
@@ -88,8 +88,9 @@ function createEdgePath(
   path.strokes = [edgeStroke];
   path.strokeWeight = context.settings.strokeWidth;
   path.strokeJoin = context.settings.lineCornerRadius > 0 ? "ROUND" : "MITER";
-  path.strokeCap = edgeKind === "arrow" ? "ARROW_LINES" : "NONE";
-  path.vectorNetwork = toVectorNetwork(points, edgeKind);
+  path.strokeCap = edge.kind === "arrow" ? "ARROW_LINES" : "NONE";
+  path.vectorNetwork = toVectorNetwork(points, edge.kind);
+  path.dashPattern = edge.dashed ? [8, 6] : [];
 
   if ("cornerRadius" in path) {
     path.cornerRadius = context.settings.lineCornerRadius;

@@ -80,6 +80,15 @@ function parseColor(value: string | undefined): SolidPaint | null {
   }
 
   const normalized = value.trim();
+
+  if (normalized.toLowerCase() === "transparent") {
+    return {
+      type: "SOLID",
+      color: { r: 0, g: 0, b: 0 },
+      opacity: 0,
+    };
+  }
+
   const hex = normalized.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
 
   if (!hex) {

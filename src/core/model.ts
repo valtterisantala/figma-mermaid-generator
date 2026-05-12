@@ -24,6 +24,7 @@ export type DiagramEdge = {
   from: string;
   to: string;
   kind: EdgeKind;
+  dashed?: boolean;
   label?: string;
   classIds: string[];
   subgraphId?: string;
@@ -35,6 +36,7 @@ export type DiagramSubgraph = {
   label: string;
   direction?: DiagramDirection;
   parentId?: string;
+  classIds: string[];
   nodeIds: string[];
   edgeIds: string[];
 };
@@ -73,6 +75,7 @@ export type DiagramLayoutResult = {
 export type DiagramMetadata = {
   sourceHash: string;
   generatorVersion: string;
+  warnings?: string[];
 };
 
 export type DiagramModel = {

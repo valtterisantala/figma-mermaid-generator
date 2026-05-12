@@ -148,12 +148,18 @@ function renderSubgraphs(context: RenderContext): void {
 
   for (const subgraph of sortedSubgraphs) {
     const layoutSubgraph = getLayoutSubgraph(subgraph.id, context.layout);
+    const isLayoutHelper = subgraph.label.trim().length === 0;
+    const style = resolveSubgraphStyle(
+      context.diagram,
+      subgraph.classIds,
+      context.settings.strokeWidth,
+    );
     const frame = figma.createFrame();
-    frame.name = `Subgraph / ${subgraph.label}`;
+    frame.name = `Subgraph / ${subgraph.label || subgraph.sourceId}`;
     setSubgraphMetadata(frame, subgraph, context.instanceId);
-    frame.fills = [subgraphFill];
-    frame.strokes = [subgraphStroke];
-    frame.strokeWeight = context.settings.strokeWidth;
+    frame.fills = isLayoutHelper ? [] : [style.fill ?? subgraphFill];
+    frame.strokes = isLayoutHelper ? [] : [style.stroke ?? subgraphStroke];
+    frame.strokeWeight = style.strokeWeight ?? context.settings.strokeWidth;
     frame.cornerRadius = context.settings.cornerRadius;
     frame.clipsContent = false;
     frame.x = layoutSubgraph.x - context.originX;
@@ -161,22 +167,131 @@ function renderSubgraphs(context: RenderContext): void {
     const titleHeight = getSubgraphTitleHeight(subgraph.id, context);
     frame.resizeWithoutConstraints(layoutSubgraph.width, layoutSubgraph.height + titleHeight);
 
-    const title = createTextLayer("Subgraph Title", subgraph.label, context);
-    const titleBox = estimateMultilineTextBox(subgraph.label, {
-      fontSize: context.settings.fontSize,
-      horizontalPadding: 0,
-      minHeight: 18,
-      minWidth: Math.max(1, layoutSubgraph.width - 24),
-      verticalPadding: 0,
-    });
-    title.x = 12;
-    title.y = 8;
-    title.resizeWithoutConstraints(Math.max(1, layoutSubgraph.width - 24), titleBox.height);
-    frame.appendChild(title);
+    if (!isLayoutHelper) {
+      const title = createTextLayer("Subgraph Title", subgraph.label, context);
+      const titleBox = estimateMultilineTextBox(subgraph.label, {
+        fontSize: context.settings.fontSize,
+        horizontalPadding: 0,
+        minHeight: 18,
+        minWidth: Math.max(1, layoutSubgraph.width - 24),
+        verticalPadding: 0,
+      });
+      title.x = 12;
+      title.y = 8;
+      title.resizeWithoutConstraints(Math.max(1, layoutSubgraph.width - 24), titleBox.height);
+      frame.appendChild(title);
+    }
 
     context.rootFrame.appendChild(frame);
     context.subgraphFrames.set(subgraph.id, frame);
   }
+}
+
+function resolveSubgraphStyle(
+  diagram: DiagramModel,
+  classIds: string[],
+  defaultStrokeWeight: number,
+): {
+  fill?: SolidPaint;
+  stroke?: SolidPaint;
+  strokeWeight?: number;
+} {
+  const stylesById = new Map(diagram.styles.map((style) => [style.id, style]));
+  const resolved: {
+    fill?: SolidPaint;
+    stroke?: SolidPaint;
+    strokeWeight?: number;
+  } = {};
+
+  for (const classId of classIds) {
+    const style = stylesById.get(classId);
+
+    if (!style) {
+      continue;
+    }
+
+    const normalizedProperties = Object.fromEntries(
+      Object.entries(style.properties).map(([key, value]) => [
+        key.trim().toLowerCase(),
+        value.trim(),
+      ]),
+    );
+    const fill = parseStyleColor(normalizedProperties.fill);
+    const stroke = parseStyleColor(normalizedProperties.stroke);
+    const strokeWeight = parseStyleStrokeWeight(
+      normalizedProperties["stroke-width"] ?? normalizedProperties.strokewidth,
+    );
+
+    if (fill) {
+      resolved.fill = fill;
+    }
+
+    if (stroke) {
+      resolved.stroke = stroke;
+    }
+
+    if (strokeWeight !== null) {
+      resolved.strokeWeight = strokeWeight;
+    }
+  }
+
+  return {
+    ...resolved,
+    strokeWeight: resolved.strokeWeight ?? defaultStrokeWeight,
+  };
+}
+
+function parseStyleColor(value: string | undefined): SolidPaint | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized === "transparent") {
+    return {
+      type: "SOLID",
+      color: { r: 0, g: 0, b: 0 },
+      opacity: 0,
+    };
+  }
+
+  const hex = normalized.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+
+  if (!hex) {
+    return null;
+  }
+
+  const expanded =
+    hex[1].length === 3
+      ? hex[1]
+          .split("")
+          .map((character) => `${character}${character}`)
+          .join("")
+      : hex[1];
+
+  return {
+    type: "SOLID",
+    color: {
+      r: Number.parseInt(expanded.slice(0, 2), 16) / 255,
+      g: Number.parseInt(expanded.slice(2, 4), 16) / 255,
+      b: Number.parseInt(expanded.slice(4, 6), 16) / 255,
+    },
+  };
+}
+
+function parseStyleStrokeWeight(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number.parseFloat(value.trim().replace(/px$/i, ""));
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
 }
 
 function renderNodes(context: RenderContext): void {
@@ -368,6 +483,10 @@ function getSubgraphTitleHeight(id: string, context: RenderContext): number {
 }
 
 function getSubgraphTitleHeightForLabel(label: string, settings: RenderSettings): number {
+  if (label.trim().length === 0) {
+    return 0;
+  }
+
   const titleBox = estimateMultilineTextBox(label, {
     fontSize: settings.fontSize,
     horizontalPadding: 0,
