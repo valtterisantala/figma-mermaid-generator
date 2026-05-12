@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { basicFlowchart } from "../fixtures/basic-flowchart";
+import { runtimeHostingArchitectureComparison } from "../fixtures";
 import { estimateMultilineTextBox, layoutDiagram, parseMermaidFlowchart } from "../core";
+import { addVisibleSubgraphSpacingForTest } from "../main/render";
 
 const repeatedPhaseFixture = `flowchart LR
 
@@ -363,5 +365,197 @@ describe("layoutDiagram", () => {
       .sort((left, right) => left.y - right.y)
       .map((node) => node.id);
     expect(middleOrderByY).toEqual(["A1", "A2", "A3", "A4", "A5", "A6", "A7", "A8", "A9"]);
+  });
+
+  it("preserves declared top-to-bottom lane order in equivalent LR comparison subgraphs", () => {
+    const diagram = parseMermaidFlowchart(runtimeHostingArchitectureComparison);
+    const layout = layoutDiagram(diagram);
+    const yByNodeId = new Map(layout.nodes.map((node) => [node.id, node.y]));
+
+    const expectTopBeforeBottom = (topId: string, bottomId: string) => {
+      expect(yByNodeId.get(topId)).toBeLessThan(
+        yByNodeId.get(bottomId) ?? Number.POSITIVE_INFINITY,
+      );
+    };
+
+    expectTopBeforeBottom("currControl", "currVercel");
+    expectTopBeforeBottom("currClient", "currAbly");
+    expectTopBeforeBottom("currDisplay", "currStrapi");
+    expectTopBeforeBottom("localControl", "localServer");
+    expectTopBeforeBottom("localClient", "localAbly");
+    expectTopBeforeBottom("localDisplay", "localStrapi");
+    expectTopBeforeBottom("hybridControl", "hybridServer");
+    expectTopBeforeBottom("hybridClient", "hybridBus");
+    expectTopBeforeBottom("hybridDisplay", "hybridStrapi");
+  });
+
+  it("adds render-time spacing between stacked visible top-level subgraphs", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TB
+      subgraph First[First group]
+        A[Alpha] --> B[Beta]
+      end
+      subgraph Second[Second group]
+        C[Gamma] --> D[Delta]
+      end`);
+    const layout = {
+      nodes: [
+        { id: "A", x: 20, y: 20, width: 100, height: 56 },
+        { id: "B", x: 160, y: 20, width: 100, height: 56 },
+        { id: "C", x: 20, y: 130, width: 100, height: 56 },
+        { id: "D", x: 160, y: 130, width: 100, height: 56 },
+      ],
+      edges: [
+        {
+          id: "edge_1_A_to_B",
+          points: [
+            { x: 120, y: 48 },
+            { x: 160, y: 48 },
+          ],
+        },
+        {
+          id: "edge_2_C_to_D",
+          points: [
+            { x: 120, y: 158 },
+            { x: 160, y: 158 },
+          ],
+        },
+      ],
+      subgraphs: [
+        { id: "First", x: 0, y: 0, width: 280, height: 110 },
+        { id: "Second", x: 0, y: 112, width: 280, height: 110 },
+      ],
+    };
+    const adjusted = addVisibleSubgraphSpacingForTest(
+      diagram,
+      layout,
+      new Map([
+        ["First", 28],
+        ["Second", 28],
+      ]),
+    );
+    const first = adjusted.subgraphs.find((subgraph) => subgraph.id === "First");
+    const second = adjusted.subgraphs.find((subgraph) => subgraph.id === "Second");
+    const movedNode = adjusted.nodes.find((node) => node.id === "C");
+    const movedEdge = adjusted.edges.find((edge) => edge.id === "edge_2_C_to_D");
+
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    expect((second?.y ?? 0) - ((first?.y ?? 0) + (first?.height ?? 0) + 28)).toBeGreaterThanOrEqual(
+      28,
+    );
+    expect(movedNode?.y).toBeGreaterThan(130);
+    expect(movedEdge?.points[0].y).toBeGreaterThan(158);
+  });
+
+  it("packs visible top-level LR subgraphs horizontally in declaration order", () => {
+    const diagram = parseMermaidFlowchart(`flowchart LR
+      subgraph First[First group]
+        A[Alpha] --> B[Beta]
+      end
+      subgraph Second[Second group]
+        C[Gamma] --> D[Delta]
+      end`);
+    const layout = {
+      nodes: [
+        { id: "A", x: 320, y: 420, width: 100, height: 56 },
+        { id: "B", x: 460, y: 420, width: 100, height: 56 },
+        { id: "C", x: 20, y: 40, width: 100, height: 56 },
+        { id: "D", x: 160, y: 40, width: 100, height: 56 },
+      ],
+      edges: [
+        {
+          id: "edge_1_A_to_B",
+          points: [
+            { x: 420, y: 448 },
+            { x: 460, y: 448 },
+          ],
+        },
+        {
+          id: "edge_2_C_to_D",
+          points: [
+            { x: 120, y: 68 },
+            { x: 160, y: 68 },
+          ],
+        },
+      ],
+      subgraphs: [
+        { id: "First", x: 300, y: 400, width: 280, height: 110 },
+        { id: "Second", x: 0, y: 0, width: 280, height: 110 },
+      ],
+    };
+    const adjusted = addVisibleSubgraphSpacingForTest(
+      diagram,
+      layout,
+      new Map([
+        ["First", 28],
+        ["Second", 28],
+      ]),
+    );
+    const first = adjusted.subgraphs.find((subgraph) => subgraph.id === "First");
+    const second = adjusted.subgraphs.find((subgraph) => subgraph.id === "Second");
+    const movedNode = adjusted.nodes.find((node) => node.id === "C");
+    const movedEdge = adjusted.edges.find((edge) => edge.id === "edge_2_C_to_D");
+
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    expect(first?.x).toBe(0);
+    expect(first?.y).toBe(0);
+    expect(second?.x).toBe((first?.x ?? 0) + (first?.width ?? 0) + 28);
+    expect(second?.y).toBe(first?.y);
+    expect(movedNode?.x).toBeGreaterThan(320);
+    expect(movedNode?.y).toBe(40);
+    expect(movedEdge?.points[0].x).toBeGreaterThan(400);
+    expect(movedEdge?.points[0].y).toBe(68);
+  });
+
+  it("packs comparable TB subgraphs horizontally in slide 16:9 mode", () => {
+    const diagram = parseMermaidFlowchart(`flowchart TB
+      subgraph Current[Current architecture]
+        direction LR
+        subgraph currentCol1[ ]
+          direction TB
+          A1[Top lane]
+          A2[Bottom lane]
+        end
+      end
+      subgraph Proposed[Proposed architecture]
+        direction LR
+        subgraph proposedCol1[ ]
+          direction TB
+          B1[Top lane]
+          B2[Bottom lane]
+        end
+      end`);
+    const layout = {
+      nodes: [
+        { id: "A1", x: 20, y: 20, width: 100, height: 56 },
+        { id: "A2", x: 20, y: 100, width: 100, height: 56 },
+        { id: "B1", x: 20, y: 280, width: 100, height: 56 },
+        { id: "B2", x: 20, y: 360, width: 100, height: 56 },
+      ],
+      edges: [],
+      subgraphs: [
+        { id: "currentCol1", x: 0, y: 0, width: 160, height: 180 },
+        { id: "Current", x: -20, y: -20, width: 200, height: 220 },
+        { id: "proposedCol1", x: 0, y: 260, width: 160, height: 180 },
+        { id: "Proposed", x: -20, y: 240, width: 200, height: 220 },
+      ],
+    };
+    const adjusted = addVisibleSubgraphSpacingForTest(
+      diagram,
+      layout,
+      new Map([
+        ["Current", 28],
+        ["Proposed", 28],
+      ]),
+      {
+        layoutTarget: "slide-16-9",
+      },
+    );
+    const current = adjusted.subgraphs.find((subgraph) => subgraph.id === "Current");
+    const proposed = adjusted.subgraphs.find((subgraph) => subgraph.id === "Proposed");
+
+    expect(proposed?.x).toBe((current?.x ?? 0) + (current?.width ?? 0) + 28);
+    expect(proposed?.y).toBe(current?.y);
   });
 });

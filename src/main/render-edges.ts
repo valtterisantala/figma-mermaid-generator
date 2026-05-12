@@ -4,11 +4,13 @@ import type {
   DiagramLayoutNode,
   DiagramLayoutResult,
   DiagramModel,
+  DiagramNode,
 } from "../core";
 import { buildOrthogonalPath, type EdgeSide, type NodeBox, type Point } from "./edge-routing";
 import { estimateMultilineTextBox } from "./label-text";
 import { setEdgeMetadata } from "./metadata";
 import type { RenderSettings } from "./render";
+import { getVisibleAncestorSubgraphId } from "./subgraph-visibility";
 import { applyMermaidLabelToTextNode } from "./text-formatting";
 
 type EdgeRenderContext = {
@@ -21,6 +23,7 @@ type EdgeRenderContext = {
   settings: RenderSettings;
   boldFontName: FontName;
   subgraphTitleHeights: Map<string, number>;
+  subgraphFrames: Map<string, FrameNode>;
 };
 
 type EdgeGeometry = {
@@ -28,6 +31,15 @@ type EdgeGeometry = {
   labelPosition: Point;
 };
 
+export type VisualNodeBoxInput = {
+  diagramNode: Pick<DiagramNode, "id" | "shape" | "subgraphId">;
+  layoutNode: DiagramLayoutNode;
+  originX: number;
+  originY: number;
+  parentTitleHeight?: number;
+};
+
+const debugEdgeAnchors = false;
 const edgeStroke: SolidPaint = { type: "SOLID", color: { r: 0.28, g: 0.32, b: 0.38 } };
 const edgeLabelFill: SolidPaint = { type: "SOLID", color: { r: 0.1, g: 0.11, b: 0.13 } };
 const edgeLabelBackground: SolidPaint = {
@@ -62,19 +74,61 @@ function createEdgeGroup(
   geometry: EdgeGeometry,
   context: EdgeRenderContext,
 ): GroupNode {
+  const parentInfo = getEdgeRenderParent(edge, context);
+  const parent = parentInfo.frame;
+  const localGeometry = toLocalEdgeGeometry(geometry, parentInfo.offset);
   const edgeParts: SceneNode[] = [];
-  const path = createEdgePath(geometry.pathPoints, edge, context);
-  context.rootFrame.appendChild(path);
+  const path = createEdgePath(localGeometry.pathPoints, edge, context);
+  parent.appendChild(path);
   edgeParts.push(path);
 
   if (edge.label) {
-    edgeParts.push(createEdgeLabel(edge.label, geometry.labelPosition, context));
+    edgeParts.push(createEdgeLabel(edge.label, localGeometry.labelPosition, context, parent));
   }
 
-  const group = figma.group(edgeParts, context.rootFrame);
+  const group = figma.group(edgeParts, parent);
   group.name = `Edge / ${edge.from} -> ${edge.to}`;
   setEdgeMetadata(group, edge, context.instanceId);
   return group;
+}
+
+function getEdgeRenderParent(
+  edge: DiagramEdge,
+  context: EdgeRenderContext,
+): { frame: FrameNode; offset: Point } {
+  const visibleSubgraphId = getVisibleAncestorSubgraphId(context.diagram, edge.subgraphId);
+  const frame = visibleSubgraphId ? context.subgraphFrames.get(visibleSubgraphId) : undefined;
+  const layoutSubgraph = visibleSubgraphId
+    ? context.layout.subgraphs.find((subgraph) => subgraph.id === visibleSubgraphId)
+    : undefined;
+
+  if (!frame || !layoutSubgraph) {
+    return {
+      frame: context.rootFrame,
+      offset: { x: 0, y: 0 },
+    };
+  }
+
+  return {
+    frame,
+    offset: {
+      x: layoutSubgraph.x - context.originX,
+      y: layoutSubgraph.y - context.originY,
+    },
+  };
+}
+
+function toLocalEdgeGeometry(geometry: EdgeGeometry, offset: Point): EdgeGeometry {
+  return {
+    pathPoints: geometry.pathPoints.map((point) => ({
+      x: round(point.x - offset.x),
+      y: round(point.y - offset.y),
+    })),
+    labelPosition: {
+      x: round(geometry.labelPosition.x - offset.x),
+      y: round(geometry.labelPosition.y - offset.y),
+    },
+  };
 }
 
 function createEdgePath(
@@ -99,7 +153,12 @@ function createEdgePath(
   return path;
 }
 
-function createEdgeLabel(label: string, position: Point, context: EdgeRenderContext): GroupNode {
+function createEdgeLabel(
+  label: string,
+  position: Point,
+  context: EdgeRenderContext,
+  parent: FrameNode,
+): GroupNode {
   const labelBox = estimateMultilineTextBox(label, {
     fontSize: context.settings.fontSize,
     horizontalPadding: 16,
@@ -135,10 +194,10 @@ function createEdgeLabel(label: string, position: Point, context: EdgeRenderCont
   background.x = text.x;
   background.y = text.y;
 
-  context.rootFrame.appendChild(background);
-  context.rootFrame.appendChild(text);
+  parent.appendChild(background);
+  parent.appendChild(text);
 
-  const group = figma.group([background, text], context.rootFrame);
+  const group = figma.group([background, text], parent);
   group.name = "Edge Label";
   return group;
 }
@@ -158,11 +217,34 @@ function getEdgeGeometry(
 
   const routePoints = layoutEdge.points.map((point) => toRootPoint(point, context));
   const pathPoints = buildOrthogonalPath(from, to, routePoints, sideOverrides);
+  logEdgeAnchorDebug(edge, from, to, pathPoints, context);
 
   return {
     pathPoints,
     labelPosition: getLabelPosition(layoutEdge, pathPoints, context),
   };
+}
+
+function logEdgeAnchorDebug(
+  edge: DiagramEdge,
+  from: NodeBox,
+  to: NodeBox,
+  pathPoints: Point[],
+  context: EdgeRenderContext,
+): void {
+  if (!debugEdgeAnchors) {
+    return;
+  }
+
+  console.log("[Mermaid edge anchors]", {
+    edge: `${edge.from} -> ${edge.to}`,
+    firstPoint: pathPoints[0],
+    from,
+    intersections: getIntersectedNodeIds(edge, pathPoints, context),
+    lastPoint: pathPoints[pathPoints.length - 1],
+    routePoints: pathPoints,
+    to,
+  });
 }
 
 function getParallelStageEdgeSideOverrides(
@@ -284,14 +366,16 @@ function getNodeBox(id: string, context: EdgeRenderContext): NodeBox | null {
   const diagramNode = context.diagram.nodes.find((node) => node.id === id);
 
   if (layoutNode && diagramNode) {
-    return {
-      id,
-      shape: diagramNode.shape,
-      x: layoutNode.x - context.originX,
-      y: layoutNode.y - context.originY,
-      width: layoutNode.width,
-      height: layoutNode.height,
-    };
+    const visibleSubgraphId = getVisibleAncestorSubgraphId(context.diagram, diagramNode.subgraphId);
+    return getVisualNodeBox({
+      diagramNode,
+      layoutNode,
+      originX: context.originX,
+      originY: context.originY,
+      parentTitleHeight: visibleSubgraphId
+        ? (context.subgraphTitleHeights.get(visibleSubgraphId) ?? subgraphTitleHeight)
+        : 0,
+    });
   }
 
   const layoutSubgraph = context.layout.subgraphs.find((subgraph) => subgraph.id === id);
@@ -307,6 +391,17 @@ function getNodeBox(id: string, context: EdgeRenderContext): NodeBox | null {
     y: layoutSubgraph.y - context.originY,
     width: layoutSubgraph.width,
     height: layoutSubgraph.height + (context.subgraphTitleHeights.get(id) ?? subgraphTitleHeight),
+  };
+}
+
+export function getVisualNodeBox(input: VisualNodeBoxInput): NodeBox {
+  return {
+    id: input.diagramNode.id,
+    shape: input.diagramNode.shape,
+    x: input.layoutNode.x - input.originX,
+    y: input.layoutNode.y - input.originY + (input.parentTitleHeight ?? 0),
+    width: input.layoutNode.width,
+    height: input.layoutNode.height,
   };
 }
 
@@ -406,14 +501,66 @@ function isPointInsideAnyNode(point: Point, context: EdgeRenderContext): boolean
   });
 }
 
+function getIntersectedNodeIds(
+  edge: DiagramEdge,
+  pathPoints: Point[],
+  context: EdgeRenderContext,
+): string[] {
+  return context.layout.nodes
+    .filter((node) => node.id !== edge.from && node.id !== edge.to)
+    .filter((node) => {
+      const box = toRootNodeBox(node, context);
+
+      return pathIntersectsBox(pathPoints, box);
+    })
+    .map((node) => node.id);
+}
+
+function pathIntersectsBox(points: Point[], box: NodeBox): boolean {
+  for (let index = 0; index < points.length - 1; index += 1) {
+    if (segmentIntersectsBox(points[index], points[index + 1], box)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function segmentIntersectsBox(start: Point, end: Point, box: NodeBox): boolean {
+  const minX = box.x;
+  const maxX = box.x + box.width;
+  const minY = box.y;
+  const maxY = box.y + box.height;
+
+  if (start.x === end.x) {
+    const y1 = Math.min(start.y, end.y);
+    const y2 = Math.max(start.y, end.y);
+    return start.x >= minX && start.x <= maxX && y2 >= minY && y1 <= maxY;
+  }
+
+  if (start.y === end.y) {
+    const x1 = Math.min(start.x, end.x);
+    const x2 = Math.max(start.x, end.x);
+    return start.y >= minY && start.y <= maxY && x2 >= minX && x1 <= maxX;
+  }
+
+  return false;
+}
+
 function toRootNodeBox(node: DiagramLayoutNode, context: EdgeRenderContext): NodeBox {
   const diagramNode = context.diagram.nodes.find((entry) => entry.id === node.id);
+  const visibleSubgraphId = getVisibleAncestorSubgraphId(context.diagram, diagramNode?.subgraphId);
 
   return {
     id: node.id,
     shape: diagramNode?.shape ?? "rectangle",
     x: node.x - context.originX,
-    y: node.y - context.originY,
+    y:
+      node.y -
+      context.originY +
+      (visibleSubgraphId
+        ? (context.subgraphTitleHeights.get(visibleSubgraphId) ?? subgraphTitleHeight)
+        : 0),
     width: node.width,
     height: node.height,
   };

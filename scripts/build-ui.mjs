@@ -63,6 +63,63 @@ ${css}
 
       <div class="controls">
         <label class="field">
+          <span>Layout target</span>
+          <select id="layout-target-select">
+            <option value="auto">Auto</option>
+            <option value="slide-16-9">Slide 16:9</option>
+            <option value="freeform">Freeform</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Fit strength</span>
+          <select id="fit-strength-select">
+            <option value="balanced">Balanced</option>
+            <option value="compact">Compact</option>
+            <option value="strict">Strict</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="controls">
+        <label class="field">
+          <span>Target resolution</span>
+          <select id="target-resolution-select">
+            <option value="hd">HD 1920 × 1080</option>
+            <option value="4k">4K 3840 × 2160</option>
+            <option value="custom">Custom</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Slide-safe margin</span>
+          <select id="slide-margin-preset-select">
+            <option value="default">Default margin</option>
+            <option value="compact">Compact margin</option>
+            <option value="custom">Custom margin</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="controls">
+        <label class="field">
+          <span>Custom width</span>
+          <input id="target-canvas-width-input" type="number" min="320" max="10000" step="10" value="1920" />
+        </label>
+
+        <label class="field">
+          <span>Custom height</span>
+          <input id="target-canvas-height-input" type="number" min="240" max="10000" step="10" value="1080" />
+        </label>
+      </div>
+
+      <label class="field">
+        <span>Custom slide-safe margin</span>
+        <input id="slide-safe-margin-input" type="number" min="0" max="400" step="4" value="80" />
+      </label>
+
+      <div class="controls">
+        <label class="field">
           <span>Font family</span>
           <select id="font-family-select">
             <option value="" disabled selected>Loading local fonts...</option>

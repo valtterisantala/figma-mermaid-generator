@@ -1,5 +1,10 @@
 export { basicFlowchart } from "./basic-flowchart";
 export { classStylingFlowchart } from "./class-styling-flowchart";
+export {
+  connectorCenteringLrFlowchart,
+  connectorCenteringSubgraphFlowchart,
+  connectorCenteringTdFlowchart,
+} from "./connector-centering";
 export { heavyAssetPipelineComparison } from "./heavy-asset-pipeline-comparison";
 export { realtimeTouchEventComparison } from "./realtime-touch-event-comparison";
 export { runtimeHostingAdvantages } from "./runtime-hosting-advantages";

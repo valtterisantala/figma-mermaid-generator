@@ -10,6 +10,7 @@ import { setDiagramRootMetadata, setNodeMetadata, setSubgraphMetadata } from "./
 import { renderEdges } from "./render-edges";
 import type { RenderPlacement } from "./rerender";
 import { resolveNodeStyle, type ResolvedNodeStyle } from "./styles";
+import { getVisibleAncestorSubgraphId, isLayoutHelperSubgraph } from "./subgraph-visibility";
 import { applyMermaidLabelToTextNode } from "./text-formatting";
 
 type RenderBounds = {
@@ -32,6 +33,19 @@ type RenderContext = {
   subgraphTitleHeights: Map<string, number>;
 };
 
+export type LayoutTarget = "auto" | "slide-16-9" | "freeform";
+export type FitStrength = "balanced" | "compact" | "strict";
+
+export type PresentationLayoutSettings = {
+  layoutTarget: LayoutTarget;
+  fitStrength: FitStrength;
+  targetCanvasWidth: number;
+  targetCanvasHeight: number;
+  slideSafeMargin: number;
+  targetAspectRatio: number;
+  minReadableTextSize: number;
+};
+
 export type RenderSettings = {
   fontName: FontName;
   fontSize: number;
@@ -42,13 +56,24 @@ export type RenderSettings = {
 
 const rootPadding = 48;
 const subgraphTitleHeight = 28;
+const visibleSubgraphGap = 28;
 const maxBoxLikeNodeTextWidth = 220;
+const debugRenderGeometry = false;
 export const defaultRenderSettings: RenderSettings = {
   fontName: { family: "FK Grotesk Neue Trial", style: "Regular" },
   fontSize: 13,
   strokeWidth: 1,
   cornerRadius: 20,
   lineCornerRadius: 12,
+};
+export const defaultPresentationLayoutSettings: PresentationLayoutSettings = {
+  fitStrength: "balanced",
+  layoutTarget: "auto",
+  minReadableTextSize: 8,
+  slideSafeMargin: 80,
+  targetAspectRatio: 16 / 9,
+  targetCanvasHeight: 1080,
+  targetCanvasWidth: 1920,
 };
 const rootFill: SolidPaint = { type: "SOLID", color: { r: 0.96, g: 0.97, b: 0.98 } };
 const subgraphFill: SolidPaint = {
@@ -64,22 +89,30 @@ export async function renderNativeNodes(
   layout: DiagramLayoutResult,
   options: {
     instanceId: string;
+    layoutSettings?: Partial<PresentationLayoutSettings>;
     placement?: RenderPlacement;
     settings?: Partial<RenderSettings>;
   },
 ): Promise<FrameNode> {
   const settings = resolveRenderSettings(options.settings);
+  const layoutSettings = resolvePresentationLayoutSettings(options.layoutSettings);
   await loadRequestedFont(settings.fontName);
   const boldFontName = await loadBoldFontName(diagram, settings.fontName);
 
   const subgraphTitleHeights = getSubgraphTitleHeights(diagram, settings);
-  const bounds = getRenderBounds(layout, subgraphTitleHeights);
+  const adjustedLayout = addVisibleSubgraphSpacing(
+    diagram,
+    layout,
+    subgraphTitleHeights,
+    layoutSettings,
+  );
+  const bounds = getRenderBounds(adjustedLayout, subgraphTitleHeights);
   const rootFrame = createRootFrame(diagram, bounds, options.placement);
   setDiagramRootMetadata(rootFrame, diagram, options.instanceId);
   const context: RenderContext = {
     diagram,
     instanceId: options.instanceId,
-    layout,
+    layout: adjustedLayout,
     rootFrame,
     originX: bounds.minX - rootPadding,
     originY: bounds.minY - rootPadding,
@@ -97,6 +130,194 @@ export async function renderNativeNodes(
   figma.viewport.scrollAndZoomIntoView([rootFrame]);
 
   return rootFrame;
+}
+
+export function addVisibleSubgraphSpacingForTest(
+  diagram: DiagramModel,
+  layout: DiagramLayoutResult,
+  subgraphTitleHeights: Map<string, number>,
+  layoutSettings: Partial<PresentationLayoutSettings> = {},
+): DiagramLayoutResult {
+  return addVisibleSubgraphSpacing(
+    diagram,
+    layout,
+    subgraphTitleHeights,
+    resolvePresentationLayoutSettings(layoutSettings),
+  );
+}
+
+function addVisibleSubgraphSpacing(
+  diagram: DiagramModel,
+  layout: DiagramLayoutResult,
+  subgraphTitleHeights: Map<string, number>,
+  layoutSettings: PresentationLayoutSettings,
+): DiagramLayoutResult {
+  const layoutSubgraphById = new Map(layout.subgraphs.map((subgraph) => [subgraph.id, subgraph]));
+  const topLevelVisibleSubgraphs = diagram.subgraphs
+    .filter((subgraph) => !subgraph.parentId && !isLayoutHelperSubgraph(subgraph))
+    .map((subgraph) => {
+      const layoutSubgraph = layoutSubgraphById.get(subgraph.id);
+
+      return layoutSubgraph
+        ? {
+            id: subgraph.id,
+            height:
+              layoutSubgraph.height +
+              (subgraphTitleHeights.get(subgraph.id) ?? subgraphTitleHeight),
+            width: layoutSubgraph.width,
+            x: layoutSubgraph.x,
+            y: layoutSubgraph.y,
+          }
+        : null;
+    })
+    .filter((entry): entry is { id: string; height: number; width: number; x: number; y: number } =>
+      Boolean(entry),
+    );
+
+  if (topLevelVisibleSubgraphs.length < 2) {
+    return layout;
+  }
+
+  const shiftBySubgraphId = new Map<string, { x: number; y: number }>();
+  const baseX = Math.min(...topLevelVisibleSubgraphs.map((subgraph) => subgraph.x));
+  const baseY = Math.min(...topLevelVisibleSubgraphs.map((subgraph) => subgraph.y));
+  let cursorX = baseX;
+  let cursorY = baseY;
+  const packDirection = getVisibleTopLevelSubgraphPackDirection(
+    diagram,
+    topLevelVisibleSubgraphs.length,
+    layoutSettings,
+  );
+
+  for (const subgraph of topLevelVisibleSubgraphs) {
+    const targetX = packDirection === "horizontal" ? cursorX : baseX;
+    const targetY = packDirection === "horizontal" ? baseY : cursorY;
+
+    shiftBySubgraphId.set(subgraph.id, {
+      x: targetX - subgraph.x,
+      y: targetY - subgraph.y,
+    });
+
+    if (packDirection === "horizontal") {
+      cursorX += subgraph.width + visibleSubgraphGap;
+    } else {
+      cursorY += subgraph.height + visibleSubgraphGap;
+    }
+  }
+
+  if ([...shiftBySubgraphId.values()].every((shift) => shift.x === 0 && shift.y === 0)) {
+    return layout;
+  }
+
+  const subgraphById = new Map(diagram.subgraphs.map((subgraph) => [subgraph.id, subgraph]));
+
+  const getSubgraphShift = (subgraphId: string | undefined): { x: number; y: number } => {
+    let currentId = subgraphId;
+
+    while (currentId) {
+      const shift = shiftBySubgraphId.get(currentId);
+
+      if (shift !== undefined) {
+        return shift;
+      }
+
+      currentId = subgraphById.get(currentId)?.parentId;
+    }
+
+    return { x: 0, y: 0 };
+  };
+
+  const nodeById = new Map(diagram.nodes.map((node) => [node.id, node]));
+  const edgeById = new Map(diagram.edges.map((edge) => [edge.id, edge]));
+
+  return {
+    nodes: layout.nodes.map((node) => {
+      const shift = getSubgraphShift(nodeById.get(node.id)?.subgraphId);
+
+      return {
+        ...node,
+        x: node.x + shift.x,
+        y: node.y + shift.y,
+      };
+    }),
+    edges: layout.edges.map((edge) => {
+      const sourceEdge = edgeById.get(edge.id);
+      const shift = getSubgraphShift(sourceEdge?.subgraphId);
+
+      return {
+        ...edge,
+        points: edge.points.map((point) => ({
+          ...point,
+          x: point.x + shift.x,
+          y: point.y + shift.y,
+        })),
+        labelPosition: edge.labelPosition
+          ? {
+              ...edge.labelPosition,
+              x: edge.labelPosition.x + shift.x,
+              y: edge.labelPosition.y + shift.y,
+            }
+          : undefined,
+      };
+    }),
+    subgraphs: layout.subgraphs.map((subgraph) => {
+      const shift = getSubgraphShift(subgraph.id);
+
+      return {
+        ...subgraph,
+        x: subgraph.x + shift.x,
+        y: subgraph.y + shift.y,
+      };
+    }),
+  };
+}
+
+function getVisibleTopLevelSubgraphPackDirection(
+  diagram: DiagramModel,
+  visibleTopLevelSubgraphCount: number,
+  layoutSettings: PresentationLayoutSettings,
+): "horizontal" | "vertical" {
+  if (diagram.direction === "LR") {
+    return "horizontal";
+  }
+
+  if (layoutSettings.layoutTarget === "freeform") {
+    return "vertical";
+  }
+
+  if (layoutSettings.layoutTarget === "slide-16-9" && visibleTopLevelSubgraphCount > 1) {
+    return "horizontal";
+  }
+
+  if (
+    layoutSettings.layoutTarget === "auto" &&
+    visibleTopLevelSubgraphCount > 1 &&
+    hasComparableTopLevelSubgraphs(diagram)
+  ) {
+    return "horizontal";
+  }
+
+  return "vertical";
+}
+
+function hasComparableTopLevelSubgraphs(diagram: DiagramModel): boolean {
+  const topLevelVisibleSubgraphs = diagram.subgraphs.filter(
+    (subgraph) => !subgraph.parentId && !isLayoutHelperSubgraph(subgraph),
+  );
+
+  if (topLevelVisibleSubgraphs.length < 2) {
+    return false;
+  }
+
+  const signatures = topLevelVisibleSubgraphs.map((subgraph) =>
+    diagram.subgraphs
+      .filter((entry) => entry.parentId === subgraph.id && isLayoutHelperSubgraph(entry))
+      .map((entry) => entry.nodeIds.length)
+      .join(","),
+  );
+  const firstSignature = signatures[0];
+
+  return firstSignature.length > 0 && signatures.every((signature) => signature === firstSignature);
 }
 
 async function loadRequestedFont(fontName: FontName): Promise<void> {
@@ -147,8 +368,14 @@ function renderSubgraphs(context: RenderContext): void {
   });
 
   for (const subgraph of sortedSubgraphs) {
+    const isLayoutHelper = isLayoutHelperSubgraph(subgraph);
+    logSubgraphVisibilityDebug(subgraph.id, isLayoutHelper ? "layout-only" : "visible");
+
+    if (isLayoutHelper) {
+      continue;
+    }
+
     const layoutSubgraph = getLayoutSubgraph(subgraph.id, context.layout);
-    const isLayoutHelper = subgraph.label.trim().length === 0;
     const style = resolveSubgraphStyle(
       context.diagram,
       subgraph.classIds,
@@ -157,8 +384,8 @@ function renderSubgraphs(context: RenderContext): void {
     const frame = figma.createFrame();
     frame.name = `Subgraph / ${subgraph.label || subgraph.sourceId}`;
     setSubgraphMetadata(frame, subgraph, context.instanceId);
-    frame.fills = isLayoutHelper ? [] : [style.fill ?? subgraphFill];
-    frame.strokes = isLayoutHelper ? [] : [style.stroke ?? subgraphStroke];
+    frame.fills = [style.fill ?? subgraphFill];
+    frame.strokes = [style.stroke ?? subgraphStroke];
     frame.strokeWeight = style.strokeWeight ?? context.settings.strokeWidth;
     frame.cornerRadius = context.settings.cornerRadius;
     frame.clipsContent = false;
@@ -167,20 +394,18 @@ function renderSubgraphs(context: RenderContext): void {
     const titleHeight = getSubgraphTitleHeight(subgraph.id, context);
     frame.resizeWithoutConstraints(layoutSubgraph.width, layoutSubgraph.height + titleHeight);
 
-    if (!isLayoutHelper) {
-      const title = createTextLayer("Subgraph Title", subgraph.label, context);
-      const titleBox = estimateMultilineTextBox(subgraph.label, {
-        fontSize: context.settings.fontSize,
-        horizontalPadding: 0,
-        minHeight: 18,
-        minWidth: Math.max(1, layoutSubgraph.width - 24),
-        verticalPadding: 0,
-      });
-      title.x = 12;
-      title.y = 8;
-      title.resizeWithoutConstraints(Math.max(1, layoutSubgraph.width - 24), titleBox.height);
-      frame.appendChild(title);
-    }
+    const title = createTextLayer("Subgraph Title", subgraph.label, context);
+    const titleBox = estimateMultilineTextBox(subgraph.label, {
+      fontSize: context.settings.fontSize,
+      horizontalPadding: 0,
+      minHeight: 18,
+      minWidth: Math.max(1, layoutSubgraph.width - 24),
+      verticalPadding: 0,
+    });
+    title.x = 12;
+    title.y = 8;
+    title.resizeWithoutConstraints(Math.max(1, layoutSubgraph.width - 24), titleBox.height);
+    frame.appendChild(title);
 
     context.rootFrame.appendChild(frame);
     context.subgraphFrames.set(subgraph.id, frame);
@@ -297,8 +522,9 @@ function parseStyleStrokeWeight(value: string | undefined): number | null {
 function renderNodes(context: RenderContext): void {
   for (const node of context.diagram.nodes) {
     const layoutNode = getLayoutNode(node.id, context.layout);
-    const parent = node.subgraphId
-      ? context.subgraphFrames.get(node.subgraphId)
+    const visibleSubgraphId = getVisibleAncestorSubgraphId(context.diagram, node.subgraphId);
+    const parent = visibleSubgraphId
+      ? context.subgraphFrames.get(visibleSubgraphId)
       : context.rootFrame;
 
     if (!parent) {
@@ -317,14 +543,17 @@ function renderNodes(context: RenderContext): void {
       continue;
     }
 
-    const subgraphLayout = getLayoutSubgraph(node.subgraphId ?? "", context.layout);
+    const subgraphLayout = getLayoutSubgraph(visibleSubgraphId ?? "", context.layout);
     createNodeGroup(
       node,
       layoutNode,
       parent,
       {
         x: layoutNode.x - subgraphLayout.x,
-        y: layoutNode.y - subgraphLayout.y + getSubgraphTitleHeight(node.subgraphId ?? "", context),
+        y:
+          layoutNode.y -
+          subgraphLayout.y +
+          getSubgraphTitleHeight(visibleSubgraphId ?? "", context),
       },
       context,
     );
@@ -466,6 +695,65 @@ function resolveRenderSettings(settings: Partial<RenderSettings> | undefined): R
   };
 }
 
+function resolvePresentationLayoutSettings(
+  settings: Partial<PresentationLayoutSettings> | undefined,
+): PresentationLayoutSettings {
+  return {
+    fitStrength: isFitStrength(settings?.fitStrength)
+      ? settings.fitStrength
+      : defaultPresentationLayoutSettings.fitStrength,
+    layoutTarget: isLayoutTarget(settings?.layoutTarget)
+      ? settings.layoutTarget
+      : defaultPresentationLayoutSettings.layoutTarget,
+    minReadableTextSize: clampLocalNumber(
+      settings?.minReadableTextSize,
+      defaultPresentationLayoutSettings.minReadableTextSize,
+      8,
+      24,
+    ),
+    slideSafeMargin: clampLocalNumber(
+      settings?.slideSafeMargin,
+      defaultPresentationLayoutSettings.slideSafeMargin,
+      0,
+      400,
+    ),
+    targetAspectRatio: clampLocalNumber(
+      settings?.targetAspectRatio,
+      defaultPresentationLayoutSettings.targetAspectRatio,
+      0.5,
+      4,
+    ),
+    targetCanvasHeight: clampLocalNumber(
+      settings?.targetCanvasHeight,
+      defaultPresentationLayoutSettings.targetCanvasHeight,
+      240,
+      10000,
+    ),
+    targetCanvasWidth: clampLocalNumber(
+      settings?.targetCanvasWidth,
+      defaultPresentationLayoutSettings.targetCanvasWidth,
+      320,
+      10000,
+    ),
+  };
+}
+
+function isLayoutTarget(value: unknown): value is LayoutTarget {
+  return value === "auto" || value === "slide-16-9" || value === "freeform";
+}
+
+function isFitStrength(value: unknown): value is FitStrength {
+  return value === "balanced" || value === "compact" || value === "strict";
+}
+
+function clampLocalNumber(value: number | undefined, fallback: number, min: number, max: number) {
+  if (value === undefined || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, value));
+}
+
 function getSubgraphTitleHeights(
   diagram: DiagramModel,
   settings: RenderSettings,
@@ -473,7 +761,9 @@ function getSubgraphTitleHeights(
   return new Map(
     diagram.subgraphs.map((subgraph) => [
       subgraph.id,
-      getSubgraphTitleHeightForLabel(subgraph.label, settings),
+      isLayoutHelperSubgraph(subgraph)
+        ? 0
+        : getSubgraphTitleHeightForLabel(subgraph.label, settings),
     ]),
   );
 }
@@ -496,6 +786,17 @@ function getSubgraphTitleHeightForLabel(label: string, settings: RenderSettings)
   });
 
   return Math.max(subgraphTitleHeight, 10 + titleBox.height);
+}
+
+function logSubgraphVisibilityDebug(id: string, visibility: "layout-only" | "visible"): void {
+  if (!debugRenderGeometry) {
+    return;
+  }
+
+  console.log("[Mermaid subgraph render]", {
+    id,
+    visibility,
+  });
 }
 
 async function loadBoldFontName(diagram: DiagramModel, fontName: FontName): Promise<FontName> {

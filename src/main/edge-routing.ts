@@ -23,6 +23,10 @@ type PathSideOverrides = {
 
 const defaultStubLength = 20;
 
+export function getConnectionAnchor(box: NodeBox, side: EdgeSide): Point {
+  return getBoundaryPointForSide(box, side);
+}
+
 export function buildOrthogonalPath(
   from: NodeBox,
   to: NodeBox,
@@ -35,8 +39,8 @@ export function buildOrthogonalPath(
   const endHint = routeHints[routeHints.length - 1] ?? fromCenter;
   const startSide = sideOverrides.startSide ?? chooseSide(fromCenter, startHint);
   const endSide = sideOverrides.endSide ?? chooseSide(toCenter, endHint);
-  const start = getBoundaryPointForSide(from, startSide);
-  const end = getBoundaryPointForSide(to, endSide);
+  const start = getConnectionAnchor(from, startSide);
+  const end = getConnectionAnchor(to, endSide);
   const startStub = offsetPoint(start, startSide, defaultStubLength);
   const endStub = offsetPoint(end, endSide, defaultStubLength);
 

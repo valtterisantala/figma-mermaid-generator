@@ -1,6 +1,14 @@
 import "./polyfills";
 import { layoutDiagram, MermaidParseError, parseMermaidFlowchart } from "../core";
-import { defaultRenderSettings, renderNativeNodes, type RenderSettings } from "./render";
+import {
+  defaultPresentationLayoutSettings,
+  defaultRenderSettings,
+  renderNativeNodes,
+  type FitStrength,
+  type LayoutTarget,
+  type PresentationLayoutSettings,
+  type RenderSettings,
+} from "./render";
 import { removePreviousRootAfterSuccessfulRender, resolveRenderTarget } from "./rerender";
 
 type FontCatalogEntry = {
@@ -28,12 +36,23 @@ type UiRenderSettings = {
   lineCornerRadius?: number;
 };
 
+type UiLayoutSettings = {
+  layoutTarget?: LayoutTarget;
+  fitStrength?: FitStrength;
+  targetCanvasWidth?: number;
+  targetCanvasHeight?: number;
+  slideSafeMargin?: number;
+  targetAspectRatio?: number;
+  minReadableTextSize?: number;
+};
+
 type RenderDiagramMessage = {
   type: "render-diagram";
   mermaid: string;
   replacePrevious: boolean;
   direction: DirectionOverride;
   spacing: SpacingPreset;
+  layoutSettings?: UiLayoutSettings;
   settings?: UiRenderSettings;
 };
 
@@ -66,10 +85,12 @@ figma.ui.onmessage = async (message: UiMessage) => {
 
   try {
     const diagram = parseMermaidFlowchart(applyDirectionOverride(source, message.direction));
-    const layout = layoutDiagram(diagram, getLayoutSpacing(message.spacing));
+    const layoutSettings = getPresentationLayoutSettings(message.layoutSettings);
+    const layout = layoutDiagram(diagram, getLayoutSpacing(message.spacing, layoutSettings));
     const target = resolveRenderTarget(message.replacePrevious);
     const rootFrame = await renderNativeNodes(diagram, layout, {
       instanceId: target.instanceId,
+      layoutSettings,
       placement: target.placement,
       settings: getRenderSettings(message.settings),
     });
@@ -96,7 +117,40 @@ function applyDirectionOverride(source: string, direction: DirectionOverride): s
   return source.replace(/^(\s*(?:flowchart|graph)\s+)([A-Za-z]+)/i, `$1${direction}`);
 }
 
-function getLayoutSpacing(spacing: SpacingPreset): Parameters<typeof layoutDiagram>[1] {
+function getLayoutSpacing(
+  spacing: SpacingPreset,
+  layoutSettings: PresentationLayoutSettings,
+): Parameters<typeof layoutDiagram>[1] {
+  if (layoutSettings.layoutTarget !== "freeform") {
+    const safeWidth = Math.max(
+      1,
+      layoutSettings.targetCanvasWidth - layoutSettings.slideSafeMargin * 2,
+    );
+    const safeHeight = Math.max(
+      1,
+      layoutSettings.targetCanvasHeight - layoutSettings.slideSafeMargin * 2,
+    );
+    const slideScale = Math.min(safeWidth / 1920, safeHeight / 1080);
+
+    if (layoutSettings.fitStrength === "strict") {
+      return {
+        edgeSep: 12,
+        nodeSep: Math.max(28, Math.round(32 * slideScale)),
+        rankSep: Math.max(56, Math.round(64 * slideScale)),
+        subgraphPadding: 20,
+      };
+    }
+
+    if (layoutSettings.fitStrength === "compact") {
+      return {
+        edgeSep: 16,
+        nodeSep: Math.max(34, Math.round(40 * slideScale)),
+        rankSep: Math.max(68, Math.round(76 * slideScale)),
+        subgraphPadding: 24,
+      };
+    }
+  }
+
   if (spacing === "compact") {
     return {
       edgeSep: 16,
@@ -116,6 +170,57 @@ function getLayoutSpacing(spacing: SpacingPreset): Parameters<typeof layoutDiagr
   }
 
   return undefined;
+}
+
+function getPresentationLayoutSettings(
+  settings: UiLayoutSettings | undefined,
+): PresentationLayoutSettings {
+  return {
+    fitStrength: isFitStrength(settings?.fitStrength)
+      ? settings.fitStrength
+      : defaultPresentationLayoutSettings.fitStrength,
+    layoutTarget: isLayoutTarget(settings?.layoutTarget)
+      ? settings.layoutTarget
+      : defaultPresentationLayoutSettings.layoutTarget,
+    minReadableTextSize: clampNumber(
+      settings?.minReadableTextSize,
+      defaultPresentationLayoutSettings.minReadableTextSize,
+      8,
+      24,
+    ),
+    slideSafeMargin: clampNumber(
+      settings?.slideSafeMargin,
+      defaultPresentationLayoutSettings.slideSafeMargin,
+      0,
+      400,
+    ),
+    targetAspectRatio: clampNumber(
+      settings?.targetAspectRatio,
+      defaultPresentationLayoutSettings.targetAspectRatio,
+      0.5,
+      4,
+    ),
+    targetCanvasHeight: clampNumber(
+      settings?.targetCanvasHeight,
+      defaultPresentationLayoutSettings.targetCanvasHeight,
+      240,
+      10000,
+    ),
+    targetCanvasWidth: clampNumber(
+      settings?.targetCanvasWidth,
+      defaultPresentationLayoutSettings.targetCanvasWidth,
+      320,
+      10000,
+    ),
+  };
+}
+
+function isLayoutTarget(value: unknown): value is LayoutTarget {
+  return value === "auto" || value === "slide-16-9" || value === "freeform";
+}
+
+function isFitStrength(value: unknown): value is FitStrength {
+  return value === "balanced" || value === "compact" || value === "strict";
 }
 
 function getRenderSettings(settings: UiRenderSettings | undefined): RenderSettings {

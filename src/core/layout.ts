@@ -88,7 +88,11 @@ export function layoutDiagram(
     toLayoutEdge(edge, graph.edge(edge.from, edge.to, edge.id)),
   );
   const repeatedPhaseNormalizedNodes = normalizeRepeatedPhaseMotifs(diagram, nodes);
-  const normalizedNodes = normalizeRepeatedParallelStages(diagram, repeatedPhaseNormalizedNodes);
+  const repeatedParallelNormalizedNodes = normalizeRepeatedParallelStages(
+    diagram,
+    repeatedPhaseNormalizedNodes,
+  );
+  const normalizedNodes = normalizeLrSubgraphLaneOrder(diagram, repeatedParallelNormalizedNodes);
   const subgraphs = diagram.subgraphs.map((subgraph) =>
     toLayoutSubgraph(subgraph, normalizedNodes, edges, resolvedOptions.subgraphPadding),
   );
@@ -277,6 +281,123 @@ function normalizeRepeatedParallelStages(
   }
 
   return nodes.map((node) => nodeById.get(node.id) ?? node);
+}
+
+function normalizeLrSubgraphLaneOrder(
+  diagram: DiagramModel,
+  nodes: DiagramLayoutNode[],
+): DiagramLayoutNode[] {
+  const nodeById = new Map(nodes.map((node) => [node.id, { ...node }]));
+  const declarationOrder = new Map(diagram.nodes.map((node, index) => [node.id, index]));
+  let changed = false;
+
+  for (const subgraph of diagram.subgraphs) {
+    if (!isOrderedLaneSubgraph(subgraph, diagram)) {
+      continue;
+    }
+
+    const orderedNodes = subgraph.nodeIds
+      .map((id) => nodeById.get(id))
+      .filter((node): node is DiagramLayoutNode => Boolean(node));
+
+    if (orderedNodes.length < 2) {
+      continue;
+    }
+
+    const sortedCenterYs = orderedNodes
+      .map((node) => node.y + node.height / 2)
+      .sort((left, right) => left - right);
+
+    for (const [index, node] of orderedNodes.entries()) {
+      const centerY = sortedCenterYs[index];
+
+      if (centerY === undefined) {
+        continue;
+      }
+
+      const nextY = round(centerY - node.height / 2);
+
+      if (node.y !== nextY) {
+        node.y = nextY;
+        changed = true;
+      }
+    }
+  }
+
+  for (const subgraph of diagram.subgraphs) {
+    if (subgraph.direction !== "LR") {
+      continue;
+    }
+
+    const memberNodeIds = new Set(subgraph.nodeIds);
+    const incomingEdgesByTarget = new Map<string, DiagramEdge[]>();
+
+    for (const edge of diagram.edges) {
+      if (
+        edge.subgraphId !== subgraph.id ||
+        !memberNodeIds.has(edge.from) ||
+        !memberNodeIds.has(edge.to)
+      ) {
+        continue;
+      }
+
+      const incomingEdges = incomingEdgesByTarget.get(edge.to) ?? [];
+      incomingEdges.push(edge);
+      incomingEdgesByTarget.set(edge.to, incomingEdges);
+    }
+
+    for (const incomingEdges of incomingEdgesByTarget.values()) {
+      const sourceNodes = [...new Set(incomingEdges.map((edge) => edge.from))]
+        .map((id) => nodeById.get(id))
+        .filter((node): node is DiagramLayoutNode => Boolean(node));
+
+      if (sourceNodes.length < 2) {
+        continue;
+      }
+
+      const sortedCenterYs = sourceNodes
+        .map((node) => node.y + node.height / 2)
+        .sort((left, right) => left - right);
+      const orderedSourceNodes = [...sourceNodes].sort((left, right) => {
+        const leftIndex = declarationOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+        const rightIndex = declarationOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+        return leftIndex - rightIndex;
+      });
+
+      for (const [index, node] of orderedSourceNodes.entries()) {
+        const centerY = sortedCenterYs[index];
+
+        if (centerY === undefined) {
+          continue;
+        }
+
+        const nextY = round(centerY - node.height / 2);
+
+        if (node.y !== nextY) {
+          node.y = nextY;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  return changed ? nodes.map((node) => nodeById.get(node.id) ?? node) : nodes;
+}
+
+function isOrderedLaneSubgraph(subgraph: DiagramSubgraph, diagram: DiagramModel): boolean {
+  if (subgraph.nodeIds.length < 2) {
+    return false;
+  }
+
+  if (subgraph.direction !== "TD") {
+    return false;
+  }
+
+  const parentDirection = subgraph.parentId
+    ? diagram.subgraphs.find((entry) => entry.id === subgraph.parentId)?.direction
+    : diagram.direction;
+
+  return parentDirection === "LR";
 }
 
 function findRepeatedParallelStageMotifs(diagram: DiagramModel): ParallelStageMotif[] {
