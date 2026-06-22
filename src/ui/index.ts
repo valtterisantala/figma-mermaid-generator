@@ -1,11 +1,13 @@
 type DirectionOverride = "auto" | "TD" | "LR";
 type SpacingPreset = "compact" | "comfortable" | "spacious";
 type LayoutTarget = "auto" | "slide-16-9" | "freeform";
+type LayoutType = "auto" | "process-flow" | "comparison" | "layered-architecture" | "freeform";
 type FitStrength = "balanced" | "compact" | "strict";
 type TargetResolution = "hd" | "4k" | "custom";
 type SlideMarginPreset = "default" | "compact" | "custom";
 
 type RenderSettings = {
+  collapseReturnEdges: boolean;
   fontFamily: string;
   fontStyle: string;
   fontSize: number;
@@ -14,6 +16,7 @@ type RenderSettings = {
   lineCornerRadius: number;
   fitStrength: FitStrength;
   layoutTarget: LayoutTarget;
+  layoutType: LayoutType;
   minReadableTextSize: number;
   slideMarginPreset: SlideMarginPreset;
   slideSafeMargin: number;
@@ -61,8 +64,10 @@ const mermaidInput = document.querySelector<HTMLTextAreaElement>("#mermaid-input
 const renderButton = document.querySelector<HTMLButtonElement>("#render-button");
 const sampleButton = document.querySelector<HTMLButtonElement>("#sample-button");
 const replacePreviousInput = document.querySelector<HTMLInputElement>("#replace-previous");
+const collapseReturnEdgesInput = document.querySelector<HTMLInputElement>("#collapse-return-edges");
 const directionSelect = document.querySelector<HTMLSelectElement>("#direction-select");
 const spacingSelect = document.querySelector<HTMLSelectElement>("#spacing-select");
+const layoutTypeSelect = document.querySelector<HTMLSelectElement>("#layout-type-select");
 const layoutTargetSelect = document.querySelector<HTMLSelectElement>("#layout-target-select");
 const fitStrengthSelect = document.querySelector<HTMLSelectElement>("#fit-strength-select");
 const targetResolutionSelect = document.querySelector<HTMLSelectElement>(
@@ -88,6 +93,7 @@ const lineCornerRadiusInput = document.querySelector<HTMLInputElement>("#line-co
 const settingsStorageKey = "mermaid-native-generator-render-settings";
 const favoriteFontTokens = ["FK", "Aptos"];
 const defaultRenderSettings: RenderSettings = {
+  collapseReturnEdges: true,
   fontFamily: "FK Grotesk Neue Trial",
   fontStyle: "Regular",
   fontSize: 13,
@@ -96,6 +102,7 @@ const defaultRenderSettings: RenderSettings = {
   lineCornerRadius: 12,
   fitStrength: "balanced",
   layoutTarget: "auto",
+  layoutType: "auto",
   minReadableTextSize: 8,
   slideMarginPreset: "default",
   slideSafeMargin: 80,
@@ -182,6 +189,20 @@ const getLayoutTarget = (): LayoutTarget => {
   return "auto";
 };
 
+const getLayoutType = (): LayoutType => {
+  const value = layoutTypeSelect?.value;
+  if (
+    value === "process-flow" ||
+    value === "comparison" ||
+    value === "layered-architecture" ||
+    value === "freeform"
+  ) {
+    return value;
+  }
+
+  return "auto";
+};
+
 const getFitStrength = (): FitStrength => {
   const value = fitStrengthSelect?.value;
   if (value === "compact" || value === "strict") {
@@ -255,6 +276,7 @@ const getRenderSettings = (): RenderSettings => {
   return {
     fontFamily: fontFamilySelect?.value || defaultRenderSettings.fontFamily,
     fontStyle: fontStyleSelect?.value || defaultRenderSettings.fontStyle,
+    collapseReturnEdges: collapseReturnEdgesInput?.checked ?? true,
     fontSize: clampNumber(fontSizeInput?.value, defaultRenderSettings.fontSize, 8, 24),
     strokeWidth: clampNumber(strokeWidthInput?.value, defaultRenderSettings.strokeWidth, 0.5, 12),
     cornerRadius: clampNumber(cornerRadiusInput?.value, defaultRenderSettings.cornerRadius, 0, 32),
@@ -266,6 +288,7 @@ const getRenderSettings = (): RenderSettings => {
     ),
     fitStrength: getFitStrength(),
     layoutTarget: getLayoutTarget(),
+    layoutType: getLayoutType(),
     minReadableTextSize: defaultRenderSettings.minReadableTextSize,
     slideMarginPreset,
     slideSafeMargin,
@@ -279,6 +302,10 @@ const getRenderSettings = (): RenderSettings => {
 const applyNumericRenderSettings = (settings: RenderSettings) => {
   if (fontSizeInput) {
     fontSizeInput.value = String(settings.fontSize);
+  }
+
+  if (collapseReturnEdgesInput) {
+    collapseReturnEdgesInput.checked = settings.collapseReturnEdges;
   }
 
   if (strokeWidthInput) {
@@ -295,6 +322,10 @@ const applyNumericRenderSettings = (settings: RenderSettings) => {
 
   if (layoutTargetSelect) {
     layoutTargetSelect.value = settings.layoutTarget;
+  }
+
+  if (layoutTypeSelect) {
+    layoutTypeSelect.value = settings.layoutType;
   }
 
   if (fitStrengthSelect) {
@@ -334,6 +365,10 @@ function loadRenderSettings(): RenderSettings {
 
     const parsed = JSON.parse(rawSettings) as Partial<RenderSettings>;
     return {
+      collapseReturnEdges:
+        typeof parsed.collapseReturnEdges === "boolean"
+          ? parsed.collapseReturnEdges
+          : defaultRenderSettings.collapseReturnEdges,
       fontFamily: parsed.fontFamily ?? defaultRenderSettings.fontFamily,
       fontStyle: parsed.fontStyle ?? defaultRenderSettings.fontStyle,
       fontSize: clampNumber(String(parsed.fontSize), defaultRenderSettings.fontSize, 8, 24),
@@ -363,6 +398,13 @@ function loadRenderSettings(): RenderSettings {
         parsed.layoutTarget === "slide-16-9" || parsed.layoutTarget === "freeform"
           ? parsed.layoutTarget
           : defaultRenderSettings.layoutTarget,
+      layoutType:
+        parsed.layoutType === "process-flow" ||
+        parsed.layoutType === "comparison" ||
+        parsed.layoutType === "layered-architecture" ||
+        parsed.layoutType === "freeform"
+          ? parsed.layoutType
+          : defaultRenderSettings.layoutType,
       minReadableTextSize: defaultRenderSettings.minReadableTextSize,
       slideMarginPreset:
         parsed.slideMarginPreset === "compact" || parsed.slideMarginPreset === "custom"
@@ -431,11 +473,15 @@ const postRenderMessage = () => {
         type: "render-diagram",
         mermaid,
         replacePrevious: replacePreviousInput?.checked ?? true,
+        connectorSettings: {
+          collapseReturnEdges: renderSettings.collapseReturnEdges,
+        },
         direction: getDirection(),
         spacing: getSpacing(),
         layoutSettings: {
           fitStrength: renderSettings.fitStrength,
           layoutTarget: renderSettings.layoutTarget,
+          layoutType: renderSettings.layoutType,
           minReadableTextSize: renderSettings.minReadableTextSize,
           slideSafeMargin: renderSettings.slideSafeMargin,
           targetAspectRatio: renderSettings.targetAspectRatio,
@@ -667,7 +713,9 @@ fontFamilySelect?.addEventListener("change", () => {
   scheduleUiResize();
 });
 for (const control of [
+  collapseReturnEdgesInput,
   layoutTargetSelect,
+  layoutTypeSelect,
   fitStrengthSelect,
   targetResolutionSelect,
   targetCanvasWidthInput,

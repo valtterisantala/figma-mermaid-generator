@@ -3,6 +3,7 @@ import { basicFlowchart } from "../fixtures/basic-flowchart";
 import {
   classStylingFlowchart,
   heavyAssetPipelineComparison,
+  layeredArchitectureFlowchart,
   realtimeTouchEventComparison,
   runtimeHostingAdvantages,
   runtimeHostingArchitectureComparison,
@@ -445,5 +446,47 @@ candidate node"]`);
     expect(diagram.nodes.length).toBeGreaterThan(10);
     expect(diagram.edges.length).toBeGreaterThan(10);
     expect(diagram.edges.some((edge) => edge.dashed)).toBe(true);
+  });
+
+  it("imports the layered architecture fixture with inline classes and shape metadata", () => {
+    const diagram = parseMermaidFlowchart(layeredArchitectureFlowchart);
+
+    expect(diagram.direction).toBe("LR");
+    expect(diagram.subgraphs.map((subgraph) => subgraph.id)).toEqual([
+      "Users",
+      "Surfaces",
+      "App",
+      "Packages",
+      "Services",
+    ]);
+    expect(diagram.nodes).toHaveLength(17);
+    expect(diagram.edges).toHaveLength(18);
+    expect(diagram.styles.map((style) => style.id)).toEqual([
+      "user",
+      "surface",
+      "app",
+      "package",
+      "service",
+    ]);
+    expect(diagram.nodes.find((node) => node.id === "Operator")).toMatchObject({
+      classIds: ["user"],
+      label: "Operator<br>Uses Control UI",
+      shape: "rounded",
+    });
+    expect(diagram.nodes.find((node) => node.id === "SurfaceHost")?.classIds).toEqual(["app"]);
+    expect(diagram.nodes.find((node) => node.id === "CMS")?.classIds).toEqual(["service"]);
+    expect(diagram.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ from: "SurfaceHost", to: "RuntimeHost" }),
+        expect.objectContaining({ from: "SurfaceHost", to: "ContentHost" }),
+        expect.objectContaining({ from: "ContentHost", to: "CMS" }),
+        expect.objectContaining({ from: "ContentHost", to: "DWS" }),
+        expect.objectContaining({ from: "ContentHost", to: "NICT" }),
+        expect.objectContaining({ from: "ContentHost", to: "SOC" }),
+      ]),
+    );
+    expect(diagram.metadata.warnings).toEqual(
+      expect.arrayContaining([expect.stringContaining('Ignored shape metadata "rounded"')]),
+    );
   });
 });

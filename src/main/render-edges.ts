@@ -6,12 +6,26 @@ import type {
   DiagramModel,
   DiagramNode,
 } from "../core";
-import { buildOrthogonalPath, type EdgeSide, type NodeBox, type Point } from "./edge-routing";
+import {
+  buildCollapsedReturnPath,
+  buildDiagramEdgePath,
+  createCollapsedReturnGroups,
+  createEdgeRoutingPlans,
+  getNodeBounds,
+  type CollapsedReturnGroup,
+  type EdgeRoutingBounds,
+  type EdgeRoutingPlan,
+  type EdgeSide,
+  type NodeBox,
+  type Point,
+  pathIntersectsNodeBox,
+} from "./edge-routing";
 import { estimateMultilineTextBox } from "./label-text";
-import { setEdgeMetadata } from "./metadata";
-import type { RenderSettings } from "./render";
+import { setCollapsedReturnEdgeMetadata, setEdgeMetadata } from "./metadata";
+import type { ConnectorSettings, RenderSettings } from "./render";
 import { getVisibleAncestorSubgraphId } from "./subgraph-visibility";
 import { applyMermaidLabelToTextNode } from "./text-formatting";
+import { renderMermaidLabelText } from "../core/text";
 
 type EdgeRenderContext = {
   diagram: DiagramModel;
@@ -29,6 +43,11 @@ type EdgeRenderContext = {
 type EdgeGeometry = {
   pathPoints: Point[];
   labelPosition: Point;
+};
+
+export type EdgeRenderResult = {
+  edgeGroups: Map<string, GroupNode>;
+  edgeLabelGroups: Map<string, GroupNode>;
 };
 
 export type VisualNodeBoxInput = {
@@ -49,15 +68,40 @@ const edgeLabelBackground: SolidPaint = {
 };
 const subgraphTitleHeight = 28;
 
-export function renderEdges(context: EdgeRenderContext): void {
+export function renderEdges(
+  context: EdgeRenderContext,
+  connectorSettings: ConnectorSettings,
+): EdgeRenderResult {
   const parallelStageEdgeSides = getParallelStageEdgeSideOverrides(context.diagram);
+  const routableBoxes = getRoutableEndpointBoxes(context);
+  const collapsedReturnGroups = createCollapsedReturnGroups(
+    context.diagram.edges,
+    routableBoxes,
+    context.diagram.direction,
+    connectorSettings.collapseReturnEdges,
+  );
+  const collapsedEdgeIds = new Set(collapsedReturnGroups.flatMap((group) => group.edgeIds));
+  const routingPlans = createEdgeRoutingPlans(
+    context.diagram.edges,
+    routableBoxes,
+    context.diagram.direction,
+  );
+  const routingBounds = getNodeBounds(getAllRoutingBoundsBoxes(context, routableBoxes));
+  const edgeGroups = new Map<string, GroupNode>();
+  const edgeLabelGroups = new Map<string, GroupNode>();
 
   for (const edge of context.diagram.edges) {
+    if (collapsedEdgeIds.has(edge.id)) {
+      continue;
+    }
+
     const layoutEdge = getLayoutEdge(edge.id, context.layout);
     const geometry = getEdgeGeometry(
       edge,
       layoutEdge,
       context,
+      routingPlans.get(edge.id),
+      routingBounds,
       parallelStageEdgeSides.get(edge.id),
     );
 
@@ -65,15 +109,86 @@ export function renderEdges(context: EdgeRenderContext): void {
       continue;
     }
 
-    createEdgeGroup(edge, geometry, context);
+    const result = createEdgeGroup(edge, geometry, context);
+    edgeGroups.set(edge.id, result.edgeGroup);
+
+    if (result.edgeLabelGroup) {
+      edgeLabelGroups.set(edge.id, result.edgeLabelGroup);
+    }
   }
+
+  for (const collapsedGroup of collapsedReturnGroups) {
+    const result = createCollapsedReturnEdgeGroup(
+      collapsedGroup,
+      routableBoxes,
+      routingBounds,
+      context,
+    );
+
+    if (!result) {
+      continue;
+    }
+
+    edgeGroups.set(collapsedGroup.id, result.edgeGroup);
+    edgeLabelGroups.set(collapsedGroup.id, result.edgeLabelGroup);
+  }
+
+  return {
+    edgeGroups,
+    edgeLabelGroups,
+  };
+}
+
+function createCollapsedReturnEdgeGroup(
+  collapsedGroup: CollapsedReturnGroup,
+  nodeBoxes: Map<string, NodeBox>,
+  routingBounds: EdgeRoutingBounds,
+  context: EdgeRenderContext,
+): { edgeGroup: GroupNode; edgeLabelGroup: GroupNode } | null {
+  const pathPoints = buildCollapsedReturnPath({
+    bounds: routingBounds,
+    direction: context.diagram.direction,
+    group: collapsedGroup,
+    nodeBoxes,
+    obstacles: getAllRoutingBoundsBoxes(context, nodeBoxes),
+  });
+
+  if (pathPoints.length < 2) {
+    return null;
+  }
+
+  const label = getCollapsedReturnLabel(collapsedGroup, context.diagram);
+  const representativeEdge = getRepresentativeCollapsedEdge(collapsedGroup, label, context.diagram);
+  const parent = context.rootFrame;
+  const path = createEdgePath(pathPoints, representativeEdge, context);
+  parent.appendChild(path);
+  const edgeLabelGroup = createEdgeLabel(label, getPathMidpoint(pathPoints), context, parent);
+  const edgeGroup = figma.group([path], parent);
+  edgeGroup.name = `Edge / Collapsed returns -> ${collapsedGroup.targetId}`;
+  setCollapsedReturnEdgeMetadata(
+    edgeGroup,
+    {
+      edgeIds: collapsedGroup.edgeIds,
+      sourceId: representativeEdge.sourceId,
+      sourceIds: collapsedGroup.sourceIds,
+      targetId: collapsedGroup.targetId,
+    },
+    context.instanceId,
+  );
+
+  logCollapsedReturnDebug(collapsedGroup, pathPoints, context);
+
+  return {
+    edgeGroup,
+    edgeLabelGroup,
+  };
 }
 
 function createEdgeGroup(
   edge: DiagramEdge,
   geometry: EdgeGeometry,
   context: EdgeRenderContext,
-): GroupNode {
+): { edgeGroup: GroupNode; edgeLabelGroup?: GroupNode } {
   const parentInfo = getEdgeRenderParent(edge, context);
   const parent = parentInfo.frame;
   const localGeometry = toLocalEdgeGeometry(geometry, parentInfo.offset);
@@ -82,14 +197,41 @@ function createEdgeGroup(
   parent.appendChild(path);
   edgeParts.push(path);
 
+  let edgeLabelGroup: GroupNode | undefined;
+
   if (edge.label) {
-    edgeParts.push(createEdgeLabel(edge.label, localGeometry.labelPosition, context, parent));
+    edgeLabelGroup = createEdgeLabel(edge.label, localGeometry.labelPosition, context, parent);
   }
 
   const group = figma.group(edgeParts, parent);
   group.name = `Edge / ${edge.from} -> ${edge.to}`;
   setEdgeMetadata(group, edge, context.instanceId);
-  return group;
+  return {
+    edgeGroup: group,
+    edgeLabelGroup,
+  };
+}
+
+function getRepresentativeCollapsedEdge(
+  collapsedGroup: CollapsedReturnGroup,
+  label: string,
+  diagram: DiagramModel,
+): DiagramEdge {
+  const firstEdge = collapsedGroup.edgeIds
+    .map((edgeId) => diagram.edges.find((edge) => edge.id === edgeId))
+    .find((edge): edge is DiagramEdge => Boolean(edge));
+  const firstSourceId = collapsedGroup.sourceIds[0] ?? collapsedGroup.targetId;
+
+  return {
+    id: collapsedGroup.id,
+    sourceId: collapsedGroup.id,
+    from: firstSourceId,
+    to: collapsedGroup.targetId,
+    kind: firstEdge?.kind ?? "arrow",
+    dashed: firstEdge?.dashed,
+    label,
+    classIds: [],
+  };
 }
 
 function getEdgeRenderParent(
@@ -206,6 +348,8 @@ function getEdgeGeometry(
   edge: DiagramEdge,
   layoutEdge: DiagramLayoutEdge,
   context: EdgeRenderContext,
+  routingPlan: EdgeRoutingPlan | undefined,
+  routingBounds: EdgeRoutingBounds,
   sideOverrides: { startSide?: EdgeSide; endSide?: EdgeSide } | undefined,
 ): EdgeGeometry | null {
   const from = getNodeBox(edge.from, context);
@@ -216,12 +360,32 @@ function getEdgeGeometry(
   }
 
   const routePoints = layoutEdge.points.map((point) => toRootPoint(point, context));
-  const pathPoints = buildOrthogonalPath(from, to, routePoints, sideOverrides);
-  logEdgeAnchorDebug(edge, from, to, pathPoints, context);
+  const resolvedPlan = {
+    ...(routingPlan ?? getDefaultRoutingPlan(context.diagram.direction)),
+    ...sideOverrides,
+  };
+  const pathPoints = buildDiagramEdgePath({
+    bounds: routingBounds,
+    direction: context.diagram.direction,
+    from,
+    plan: resolvedPlan,
+    routeHints: routePoints,
+    to,
+  });
+  logEdgeAnchorDebug(edge, from, to, pathPoints, context, resolvedPlan);
 
   return {
     pathPoints,
     labelPosition: getLabelPosition(layoutEdge, pathPoints, context),
+  };
+}
+
+function getDefaultRoutingPlan(direction: DiagramModel["direction"]): EdgeRoutingPlan {
+  return {
+    mode: "forward",
+    startSide: direction === "LR" ? "right" : "bottom",
+    endSide: direction === "LR" ? "left" : "top",
+    lane: 0,
   };
 }
 
@@ -231,6 +395,7 @@ function logEdgeAnchorDebug(
   to: NodeBox,
   pathPoints: Point[],
   context: EdgeRenderContext,
+  routingPlan: EdgeRoutingPlan,
 ): void {
   if (!debugEdgeAnchors) {
     return;
@@ -242,8 +407,31 @@ function logEdgeAnchorDebug(
     from,
     intersections: getIntersectedNodeIds(edge, pathPoints, context),
     lastPoint: pathPoints[pathPoints.length - 1],
+    mode: routingPlan.mode,
+    pathBounds: getPathBounds(pathPoints),
     routePoints: pathPoints,
+    source: "fallback-router",
     to,
+  });
+}
+
+function logCollapsedReturnDebug(
+  collapsedGroup: CollapsedReturnGroup,
+  pathPoints: Point[],
+  context: EdgeRenderContext,
+): void {
+  if (!debugEdgeAnchors) {
+    return;
+  }
+
+  console.log("[Mermaid collapsed return]", {
+    edgeIds: collapsedGroup.edgeIds,
+    intersections: getIntersectedCollapsedNodeIds(collapsedGroup, pathPoints, context),
+    pathBounds: getPathBounds(pathPoints),
+    routePoints: pathPoints,
+    source: "collapsed-return",
+    sourceIds: collapsedGroup.sourceIds,
+    targetId: collapsedGroup.targetId,
   });
 }
 
@@ -361,6 +549,108 @@ function toRootPoint(point: Point, context: EdgeRenderContext): Point {
   };
 }
 
+function getRoutableEndpointBoxes(context: EdgeRenderContext): Map<string, NodeBox> {
+  const endpointIds = new Set<string>();
+
+  for (const edge of context.diagram.edges) {
+    endpointIds.add(edge.from);
+    endpointIds.add(edge.to);
+  }
+
+  const boxes = new Map<string, NodeBox>();
+
+  for (const id of endpointIds) {
+    const box = getNodeBox(id, context);
+
+    if (box) {
+      boxes.set(id, box);
+    }
+  }
+
+  return boxes;
+}
+
+function getCollapsedReturnLabel(
+  collapsedGroup: CollapsedReturnGroup,
+  diagram: DiagramModel,
+): string {
+  const nodeById = new Map(diagram.nodes.map((node) => [node.id, node]));
+  const targetLabel = getShortPlainLabel(
+    nodeById.get(collapsedGroup.targetId)?.label ?? collapsedGroup.targetId,
+  );
+  const sourceLabels = collapsedGroup.sourceIds.map((sourceId) =>
+    getShortPlainLabel(nodeById.get(sourceId)?.label ?? sourceId),
+  );
+  const visibleSourceLabels = sourceLabels.slice(0, 3);
+  const extraCount = sourceLabels.length - visibleSourceLabels.length;
+  const sourceText =
+    extraCount > 0
+      ? `${visibleSourceLabels.join(", ")} +${extraCount} more`
+      : visibleSourceLabels.join(", ");
+
+  return `Returns ${sourceText} to ${targetLabel}`;
+}
+
+function getShortPlainLabel(label: string): string {
+  const text = renderMermaidLabelText(label)
+    .text.split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ");
+
+  return text.length > 44 ? `${text.slice(0, 41).trim()}...` : text;
+}
+
+function getIntersectedCollapsedNodeIds(
+  collapsedGroup: CollapsedReturnGroup,
+  pathPoints: Point[],
+  context: EdgeRenderContext,
+): string[] {
+  const ignoredIds = new Set([...collapsedGroup.sourceIds, collapsedGroup.targetId]);
+
+  return context.layout.nodes
+    .filter((node) => !ignoredIds.has(node.id))
+    .filter((node) => {
+      const box = toRootNodeBox(node, context);
+
+      return pathIntersectsNodeBox(pathPoints, box);
+    })
+    .map((node) => node.id);
+}
+
+function getAllRoutingBoundsBoxes(
+  context: EdgeRenderContext,
+  endpointBoxes: Map<string, NodeBox>,
+): NodeBox[] {
+  const boxes = [...endpointBoxes.values()];
+
+  for (const node of context.diagram.nodes) {
+    if (endpointBoxes.has(node.id)) {
+      continue;
+    }
+
+    const box = getNodeBox(node.id, context);
+
+    if (box) {
+      boxes.push(box);
+    }
+  }
+
+  for (const subgraph of context.layout.subgraphs) {
+    boxes.push({
+      id: subgraph.id,
+      shape: "rectangle",
+      x: subgraph.x - context.originX,
+      y: subgraph.y - context.originY,
+      width: subgraph.width,
+      height:
+        subgraph.height + (context.subgraphTitleHeights.get(subgraph.id) ?? subgraphTitleHeight),
+    });
+  }
+
+  return boxes;
+}
+
 function getNodeBox(id: string, context: EdgeRenderContext): NodeBox | null {
   const layoutNode = context.layout.nodes.find((node) => node.id === id);
   const diagramNode = context.diagram.nodes.find((node) => node.id === id);
@@ -469,6 +759,29 @@ function getPathMidpoint(pathPoints: Point[]): Point {
   }
 
   return pathPoints[pathPoints.length - 1];
+}
+
+function getPathBounds(pathPoints: Point[]): {
+  height: number;
+  width: number;
+  x: number;
+  y: number;
+} {
+  if (pathPoints.length === 0) {
+    return { height: 0, width: 0, x: 0, y: 0 };
+  }
+
+  const minX = Math.min(...pathPoints.map((point) => point.x));
+  const minY = Math.min(...pathPoints.map((point) => point.y));
+  const maxX = Math.max(...pathPoints.map((point) => point.x));
+  const maxY = Math.max(...pathPoints.map((point) => point.y));
+
+  return {
+    height: round(maxY - minY),
+    width: round(maxX - minX),
+    x: round(minX),
+    y: round(minY),
+  };
 }
 
 function toVectorNetwork(points: Point[], edgeKind: DiagramEdge["kind"]): VectorNetwork {

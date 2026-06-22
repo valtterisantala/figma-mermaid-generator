@@ -63,6 +63,17 @@ ${css}
 
       <div class="controls">
         <label class="field">
+          <span>Layout type</span>
+          <select id="layout-type-select">
+            <option value="auto">Auto</option>
+            <option value="process-flow">Process flow</option>
+            <option value="comparison">Comparison</option>
+            <option value="layered-architecture">Layered architecture</option>
+            <option value="freeform">Freeform</option>
+          </select>
+        </label>
+
+        <label class="field">
           <span>Layout target</span>
           <select id="layout-target-select">
             <option value="auto">Auto</option>
@@ -71,15 +82,16 @@ ${css}
           </select>
         </label>
 
-        <label class="field">
-          <span>Fit strength</span>
-          <select id="fit-strength-select">
-            <option value="balanced">Balanced</option>
-            <option value="compact">Compact</option>
-            <option value="strict">Strict</option>
-          </select>
-        </label>
       </div>
+
+      <label class="field">
+        <span>Fit strength</span>
+        <select id="fit-strength-select">
+          <option value="balanced">Balanced</option>
+          <option value="compact">Compact</option>
+          <option value="strict">Strict</option>
+        </select>
+      </label>
 
       <div class="controls">
         <label class="field">
@@ -159,6 +171,11 @@ ${css}
       <label class="toggle">
         <input id="replace-previous" type="checkbox" checked />
         <span>Replace previous</span>
+      </label>
+
+      <label class="toggle">
+        <input id="collapse-return-edges" type="checkbox" checked />
+        <span>Collapse return edges</span>
       </label>
 
       <div class="actions">

@@ -4,11 +4,15 @@ export const generatorName = "mermaid-native-generator";
 export const generatorVersion = "0.1.0";
 
 const metadataKeys = {
+  collapsedEdgeIds: "collapsedEdgeIds",
+  collapsedSourceIds: "collapsedSourceIds",
   generator: "generator",
   instanceId: "instanceId",
   kind: "kind",
+  routingSource: "routingSource",
   sourceHash: "sourceHash",
   sourceId: "sourceId",
+  targetId: "targetId",
   version: "version",
 } as const;
 
@@ -57,6 +61,24 @@ export function setNodeMetadata(group: GroupNode, node: DiagramNode, instanceId:
 export function setEdgeMetadata(group: GroupNode, edge: DiagramEdge, instanceId: string): void {
   setCommonMetadata(group, "edge", instanceId);
   group.setPluginData(metadataKeys.sourceId, edge.sourceId);
+}
+
+export function setCollapsedReturnEdgeMetadata(
+  group: GroupNode,
+  input: {
+    edgeIds: string[];
+    sourceIds: string[];
+    sourceId: string;
+    targetId: string;
+  },
+  instanceId: string,
+): void {
+  setCommonMetadata(group, "edge", instanceId);
+  group.setPluginData(metadataKeys.sourceId, input.sourceId);
+  group.setPluginData(metadataKeys.routingSource, "collapsed-return");
+  group.setPluginData(metadataKeys.collapsedEdgeIds, JSON.stringify(input.edgeIds));
+  group.setPluginData(metadataKeys.collapsedSourceIds, JSON.stringify(input.sourceIds));
+  group.setPluginData(metadataKeys.targetId, input.targetId);
 }
 
 function setCommonMetadata(node: SceneNode, kind: GeneratedKind, instanceId: string): void {

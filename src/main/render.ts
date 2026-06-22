@@ -5,6 +5,7 @@ import type {
   DiagramNode,
   NodeShape,
 } from "../core";
+import { finalizeGeometry } from "./finalize-geometry";
 import { estimateMultilineTextBox } from "./label-text";
 import { setDiagramRootMetadata, setNodeMetadata, setSubgraphMetadata } from "./metadata";
 import { renderEdges } from "./render-edges";
@@ -29,14 +30,35 @@ type RenderContext = {
   originY: number;
   settings: RenderSettings;
   boldFontName: FontName;
+  nodeGroups: Map<string, GroupNode>;
   subgraphFrames: Map<string, FrameNode>;
   subgraphTitleHeights: Map<string, number>;
 };
 
+type VisibleTopLevelSubgraphBlock = {
+  id: string;
+  height: number;
+  width: number;
+  x: number;
+  y: number;
+};
+
+type SubgraphArrangement = {
+  name: string;
+  rows: number[];
+};
+
 export type LayoutTarget = "auto" | "slide-16-9" | "freeform";
+export type LayoutType =
+  | "auto"
+  | "process-flow"
+  | "comparison"
+  | "layered-architecture"
+  | "freeform";
 export type FitStrength = "balanced" | "compact" | "strict";
 
 export type PresentationLayoutSettings = {
+  layoutType: LayoutType;
   layoutTarget: LayoutTarget;
   fitStrength: FitStrength;
   targetCanvasWidth: number;
@@ -54,6 +76,10 @@ export type RenderSettings = {
   lineCornerRadius: number;
 };
 
+export type ConnectorSettings = {
+  collapseReturnEdges: boolean;
+};
+
 const rootPadding = 48;
 const subgraphTitleHeight = 28;
 const visibleSubgraphGap = 28;
@@ -66,9 +92,13 @@ export const defaultRenderSettings: RenderSettings = {
   cornerRadius: 20,
   lineCornerRadius: 12,
 };
+export const defaultConnectorSettings: ConnectorSettings = {
+  collapseReturnEdges: true,
+};
 export const defaultPresentationLayoutSettings: PresentationLayoutSettings = {
   fitStrength: "balanced",
   layoutTarget: "auto",
+  layoutType: "auto",
   minReadableTextSize: 8,
   slideSafeMargin: 80,
   targetAspectRatio: 16 / 9,
@@ -89,12 +119,14 @@ export async function renderNativeNodes(
   layout: DiagramLayoutResult,
   options: {
     instanceId: string;
+    connectorSettings?: Partial<ConnectorSettings>;
     layoutSettings?: Partial<PresentationLayoutSettings>;
     placement?: RenderPlacement;
     settings?: Partial<RenderSettings>;
   },
 ): Promise<FrameNode> {
   const settings = resolveRenderSettings(options.settings);
+  const connectorSettings = resolveConnectorSettings(options.connectorSettings);
   const layoutSettings = resolvePresentationLayoutSettings(options.layoutSettings);
   await loadRequestedFont(settings.fontName);
   const boldFontName = await loadBoldFontName(diagram, settings.fontName);
@@ -118,13 +150,23 @@ export async function renderNativeNodes(
     originY: bounds.minY - rootPadding,
     settings,
     boldFontName,
+    nodeGroups: new Map(),
     subgraphFrames: new Map(),
     subgraphTitleHeights,
   };
 
   renderSubgraphs(context);
-  renderEdges(context);
+  const edgeResult = renderEdges(context, connectorSettings);
   renderNodes(context);
+  finalizeGeometry({
+    diagram,
+    edgeGroups: edgeResult.edgeGroups,
+    edgeLabelGroups: edgeResult.edgeLabelGroups,
+    layoutSettings,
+    nodeGroups: context.nodeGroups,
+    rootFrame,
+    subgraphFrames: context.subgraphFrames,
+  });
 
   insertRootFrame(rootFrame, options.placement);
   figma.viewport.scrollAndZoomIntoView([rootFrame]);
@@ -181,28 +223,20 @@ function addVisibleSubgraphSpacing(
   const shiftBySubgraphId = new Map<string, { x: number; y: number }>();
   const baseX = Math.min(...topLevelVisibleSubgraphs.map((subgraph) => subgraph.x));
   const baseY = Math.min(...topLevelVisibleSubgraphs.map((subgraph) => subgraph.y));
-  let cursorX = baseX;
-  let cursorY = baseY;
-  const packDirection = getVisibleTopLevelSubgraphPackDirection(
+  const targetPositions = getVisibleTopLevelSubgraphTargetPositions(
     diagram,
-    topLevelVisibleSubgraphs.length,
+    topLevelVisibleSubgraphs,
+    { x: baseX, y: baseY },
     layoutSettings,
   );
 
   for (const subgraph of topLevelVisibleSubgraphs) {
-    const targetX = packDirection === "horizontal" ? cursorX : baseX;
-    const targetY = packDirection === "horizontal" ? baseY : cursorY;
+    const targetPosition = targetPositions.get(subgraph.id) ?? { x: subgraph.x, y: subgraph.y };
 
     shiftBySubgraphId.set(subgraph.id, {
-      x: targetX - subgraph.x,
-      y: targetY - subgraph.y,
+      x: targetPosition.x - subgraph.x,
+      y: targetPosition.y - subgraph.y,
     });
-
-    if (packDirection === "horizontal") {
-      cursorX += subgraph.width + visibleSubgraphGap;
-    } else {
-      cursorY += subgraph.height + visibleSubgraphGap;
-    }
   }
 
   if ([...shiftBySubgraphId.values()].every((shift) => shift.x === 0 && shift.y === 0)) {
@@ -272,52 +306,392 @@ function addVisibleSubgraphSpacing(
   };
 }
 
-function getVisibleTopLevelSubgraphPackDirection(
+function getVisibleTopLevelSubgraphTargetPositions(
   diagram: DiagramModel,
-  visibleTopLevelSubgraphCount: number,
+  blocks: VisibleTopLevelSubgraphBlock[],
+  origin: { x: number; y: number },
   layoutSettings: PresentationLayoutSettings,
-): "horizontal" | "vertical" {
-  if (diagram.direction === "LR") {
-    return "horizontal";
+): Map<string, { x: number; y: number }> {
+  if (layoutSettings.layoutType === "layered-architecture") {
+    return getLayeredArchitecturePositions(diagram, blocks, origin);
+  }
+
+  const sourceArrangement = getSourceArrangement(diagram, blocks.length, layoutSettings);
+
+  if (shouldPreserveLrTopLevelSubgraphRow(diagram, blocks)) {
+    return getArrangementPositions(blocks, sourceArrangement, origin);
   }
 
   if (layoutSettings.layoutTarget === "freeform") {
-    return "vertical";
+    return getArrangementPositions(blocks, sourceArrangement, origin);
   }
 
-  if (layoutSettings.layoutTarget === "slide-16-9" && visibleTopLevelSubgraphCount > 1) {
-    return "horizontal";
+  if (layoutSettings.layoutTarget === "auto" && blocks.length < 3) {
+    return getArrangementPositions(blocks, sourceArrangement, origin);
   }
+
+  const candidates = getCandidateArrangements(blocks.length, sourceArrangement);
+  const sourceScore = scoreArrangement(blocks, sourceArrangement, layoutSettings);
+  const scoredCandidates = candidates.map((candidate) => ({
+    arrangement: candidate,
+    score: scoreArrangement(blocks, candidate, layoutSettings),
+  }));
+  const best = scoredCandidates.reduce((winner, candidate) =>
+    candidate.score > winner.score ? candidate : winner,
+  );
 
   if (
     layoutSettings.layoutTarget === "auto" &&
-    visibleTopLevelSubgraphCount > 1 &&
-    hasComparableTopLevelSubgraphs(diagram)
+    (!isClearlyPoorSlideFit(blocks, sourceArrangement, layoutSettings) || best.score <= sourceScore)
   ) {
-    return "horizontal";
+    return getArrangementPositions(blocks, sourceArrangement, origin);
   }
 
-  return "vertical";
+  return getArrangementPositions(blocks, best.arrangement, origin);
 }
 
-function hasComparableTopLevelSubgraphs(diagram: DiagramModel): boolean {
-  const topLevelVisibleSubgraphs = diagram.subgraphs.filter(
-    (subgraph) => !subgraph.parentId && !isLayoutHelperSubgraph(subgraph),
-  );
-
-  if (topLevelVisibleSubgraphs.length < 2) {
+function shouldPreserveLrTopLevelSubgraphRow(
+  diagram: DiagramModel,
+  blocks: VisibleTopLevelSubgraphBlock[],
+): boolean {
+  if (diagram.direction !== "LR" || blocks.length < 2) {
     return false;
   }
 
-  const signatures = topLevelVisibleSubgraphs.map((subgraph) =>
-    diagram.subgraphs
-      .filter((entry) => entry.parentId === subgraph.id && isLayoutHelperSubgraph(entry))
-      .map((entry) => entry.nodeIds.length)
-      .join(","),
-  );
-  const firstSignature = signatures[0];
+  const topLevelIds = blocks.map((block) => block.id);
+  const topLevelIdSet = new Set(topLevelIds);
+  const nodeTopLevelSubgraphById = new Map<string, string>();
 
-  return firstSignature.length > 0 && signatures.every((signature) => signature === firstSignature);
+  for (const node of diagram.nodes) {
+    const topLevelId = getTopLevelSubgraphId(node.subgraphId, diagram);
+
+    if (topLevelId && topLevelIdSet.has(topLevelId)) {
+      nodeTopLevelSubgraphById.set(node.id, topLevelId);
+    }
+  }
+
+  const connectedPairs = new Set<string>();
+
+  for (const edge of diagram.edges) {
+    const fromTopLevelId = nodeTopLevelSubgraphById.get(edge.from);
+    const toTopLevelId = nodeTopLevelSubgraphById.get(edge.to);
+
+    if (!fromTopLevelId || !toTopLevelId || fromTopLevelId === toTopLevelId) {
+      continue;
+    }
+
+    connectedPairs.add(`${fromTopLevelId}::${toTopLevelId}`);
+  }
+
+  return topLevelIds.slice(0, -1).every((id, index) => {
+    const nextId = topLevelIds[index + 1];
+    return connectedPairs.has(`${id}::${nextId}`);
+  });
+}
+
+function getTopLevelSubgraphId(
+  subgraphId: string | undefined,
+  diagram: DiagramModel,
+): string | undefined {
+  if (!subgraphId) {
+    return undefined;
+  }
+
+  const subgraphById = new Map(diagram.subgraphs.map((subgraph) => [subgraph.id, subgraph]));
+  let currentId: string | undefined = subgraphId;
+  let topLevelId: string | undefined;
+
+  while (currentId) {
+    topLevelId = currentId;
+    currentId = subgraphById.get(currentId)?.parentId;
+  }
+
+  return topLevelId;
+}
+
+function getLayeredArchitecturePositions(
+  diagram: DiagramModel,
+  blocks: VisibleTopLevelSubgraphBlock[],
+  origin: { x: number; y: number },
+): Map<string, { x: number; y: number }> {
+  const blockById = new Map(blocks.map((block) => [block.id, block]));
+  const positions = new Map<string, { x: number; y: number }>();
+  const leftToRightZones = ["Users", "Surfaces", "App"];
+  const rightColumnZones = ["Services", "Packages"];
+  let cursorX = origin.x;
+  let mainRowHeight = 0;
+
+  for (const id of leftToRightZones) {
+    const block = blockById.get(id);
+
+    if (!block) {
+      continue;
+    }
+
+    positions.set(id, {
+      x: cursorX,
+      y: origin.y,
+    });
+    cursorX += block.width + visibleSubgraphGap * 2;
+    mainRowHeight = Math.max(mainRowHeight, block.height);
+  }
+
+  const rightColumnX = cursorX;
+  let rightColumnY = origin.y;
+
+  for (const id of rightColumnZones) {
+    const block = blockById.get(id);
+
+    if (!block) {
+      continue;
+    }
+
+    positions.set(id, {
+      x: rightColumnX,
+      y: rightColumnY,
+    });
+    rightColumnY += block.height + visibleSubgraphGap * 2;
+  }
+
+  const usedIds = new Set(positions.keys());
+  let overflowY = Math.max(origin.y + mainRowHeight, rightColumnY) + visibleSubgraphGap * 2;
+
+  for (const subgraph of diagram.subgraphs.filter((subgraph) => !subgraph.parentId)) {
+    const block = blockById.get(subgraph.id);
+
+    if (!block || usedIds.has(block.id)) {
+      continue;
+    }
+
+    positions.set(block.id, {
+      x: origin.x,
+      y: overflowY,
+    });
+    overflowY += block.height + visibleSubgraphGap * 2;
+    usedIds.add(block.id);
+  }
+
+  for (const block of blocks) {
+    if (positions.has(block.id)) {
+      continue;
+    }
+
+    positions.set(block.id, {
+      x: origin.x,
+      y: overflowY,
+    });
+    overflowY += block.height + visibleSubgraphGap * 2;
+  }
+
+  return positions;
+}
+
+function getSourceArrangement(
+  diagram: DiagramModel,
+  blockCount: number,
+  layoutSettings: PresentationLayoutSettings,
+): SubgraphArrangement {
+  if (diagram.direction === "LR") {
+    return {
+      name: "source-row",
+      rows: Array.from({ length: blockCount }, () => 0),
+    };
+  }
+
+  if (
+    layoutSettings.layoutTarget !== "freeform" &&
+    layoutSettings.layoutTarget !== "auto" &&
+    blockCount === 2
+  ) {
+    return {
+      name: "source-row",
+      rows: [0, 0],
+    };
+  }
+
+  return {
+    name: "source-stack",
+    rows: Array.from({ length: blockCount }, (_value, index) => index),
+  };
+}
+
+function getCandidateArrangements(
+  blockCount: number,
+  sourceArrangement: SubgraphArrangement,
+): SubgraphArrangement[] {
+  const candidates: SubgraphArrangement[] = [sourceArrangement];
+
+  candidates.push({
+    name: "row",
+    rows: Array.from({ length: blockCount }, () => 0),
+  });
+  candidates.push({
+    name: "stack",
+    rows: Array.from({ length: blockCount }, (_value, index) => index),
+  });
+
+  if (blockCount === 3) {
+    candidates.push({ name: "2+1", rows: [0, 0, 1] });
+    candidates.push({ name: "1+2", rows: [0, 1, 1] });
+  }
+
+  if (blockCount === 4) {
+    candidates.push({ name: "2x2", rows: [0, 0, 1, 1] });
+  }
+
+  if (blockCount > 4) {
+    const columnCount = Math.ceil(Math.sqrt(blockCount));
+    candidates.push({
+      name: "grid",
+      rows: Array.from({ length: blockCount }, (_value, index) => Math.floor(index / columnCount)),
+    });
+  }
+
+  return dedupeArrangements(candidates);
+}
+
+function dedupeArrangements(arrangements: SubgraphArrangement[]): SubgraphArrangement[] {
+  const seen = new Set<string>();
+  return arrangements.filter((arrangement) => {
+    const key = arrangement.rows.join(",");
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function getArrangementPositions(
+  blocks: VisibleTopLevelSubgraphBlock[],
+  arrangement: SubgraphArrangement,
+  origin: { x: number; y: number },
+): Map<string, { x: number; y: number }> {
+  const positions = new Map<string, { x: number; y: number }>();
+  const rows = getArrangementRows(blocks, arrangement);
+  let cursorY = origin.y;
+
+  for (const row of rows) {
+    let cursorX = origin.x;
+    const rowHeight = Math.max(...row.map((block) => block.height));
+
+    for (const block of row) {
+      positions.set(block.id, {
+        x: cursorX,
+        y: cursorY,
+      });
+      cursorX += block.width + visibleSubgraphGap;
+    }
+
+    cursorY += rowHeight + visibleSubgraphGap;
+  }
+
+  return positions;
+}
+
+function scoreArrangement(
+  blocks: VisibleTopLevelSubgraphBlock[],
+  arrangement: SubgraphArrangement,
+  layoutSettings: PresentationLayoutSettings,
+): number {
+  const bounds = measureArrangement(blocks, arrangement);
+  const safeWidth = Math.max(
+    1,
+    layoutSettings.targetCanvasWidth - layoutSettings.slideSafeMargin * 2,
+  );
+  const safeHeight = Math.max(
+    1,
+    layoutSettings.targetCanvasHeight - layoutSettings.slideSafeMargin * 2,
+  );
+  const aspectRatio = bounds.width / Math.max(1, bounds.height);
+  const aspectRatioPenalty =
+    Math.abs(Math.log(aspectRatio / layoutSettings.targetAspectRatio)) * 130;
+  const heightUse = bounds.height / safeHeight;
+  const widthUse = bounds.width / safeWidth;
+  const underusedHeightPenalty = heightUse < 0.35 ? (0.35 - heightUse) * 180 : 0;
+  const underusedWidthPenalty = widthUse < 0.25 ? (0.25 - widthUse) * 70 : 0;
+  const overflowX = Math.max(0, bounds.width - safeWidth) / safeWidth;
+  const overflowY = Math.max(0, bounds.height - safeHeight) / safeHeight;
+  const overflowWeight =
+    layoutSettings.fitStrength === "strict"
+      ? 900
+      : layoutSettings.fitStrength === "compact"
+        ? 650
+        : 450;
+  const rowCount = Math.max(...arrangement.rows) + 1;
+  const structurePenalty = rowCount > 2 && blocks.length <= 3 ? 20 : 0;
+  const rowPreference = blocks.length === 2 && rowCount === 1 ? 120 : 0;
+  const wideStripPenalty =
+    blocks.length >= 3 && rowCount === 1 && (aspectRatio > 2.2 || bounds.width > safeWidth)
+      ? 220
+      : 0;
+
+  return (
+    1000 +
+    rowPreference -
+    aspectRatioPenalty -
+    underusedHeightPenalty -
+    underusedWidthPenalty -
+    (overflowX + overflowY) * overflowWeight -
+    structurePenalty -
+    wideStripPenalty
+  );
+}
+
+function isClearlyPoorSlideFit(
+  blocks: VisibleTopLevelSubgraphBlock[],
+  arrangement: SubgraphArrangement,
+  layoutSettings: PresentationLayoutSettings,
+): boolean {
+  const bounds = measureArrangement(blocks, arrangement);
+  const safeWidth = Math.max(
+    1,
+    layoutSettings.targetCanvasWidth - layoutSettings.slideSafeMargin * 2,
+  );
+  const safeHeight = Math.max(
+    1,
+    layoutSettings.targetCanvasHeight - layoutSettings.slideSafeMargin * 2,
+  );
+  const aspectRatio = bounds.width / Math.max(1, bounds.height);
+  const heightUse = bounds.height / safeHeight;
+  const widthOverflow = bounds.width > safeWidth;
+
+  return aspectRatio > 2.6 || heightUse < 0.35 || (widthOverflow && heightUse < 0.55);
+}
+
+function measureArrangement(
+  blocks: VisibleTopLevelSubgraphBlock[],
+  arrangement: SubgraphArrangement,
+): { width: number; height: number } {
+  const rows = getArrangementRows(blocks, arrangement);
+  const rowWidths = rows.map((row) =>
+    row.reduce(
+      (width, block, index) => width + block.width + (index > 0 ? visibleSubgraphGap : 0),
+      0,
+    ),
+  );
+  const rowHeights = rows.map((row) => Math.max(...row.map((block) => block.height)));
+
+  return {
+    height: rowHeights.reduce(
+      (height, rowHeight, index) => height + rowHeight + (index > 0 ? visibleSubgraphGap : 0),
+      0,
+    ),
+    width: Math.max(...rowWidths),
+  };
+}
+
+function getArrangementRows(
+  blocks: VisibleTopLevelSubgraphBlock[],
+  arrangement: SubgraphArrangement,
+): VisibleTopLevelSubgraphBlock[][] {
+  const rowIndexes = [...new Set(arrangement.rows)].sort((left, right) => left - right);
+
+  return rowIndexes.map((rowIndex) =>
+    blocks.filter((_block, blockIndex) => arrangement.rows[blockIndex] === rowIndex),
+  );
 }
 
 async function loadRequestedFont(fontName: FontName): Promise<void> {
@@ -589,6 +963,7 @@ function createNodeGroup(
   const group = figma.group([shape, label], parent);
   group.name = `Node / ${node.id}`;
   setNodeMetadata(group, node, context.instanceId);
+  context.nodeGroups.set(node.id, group);
   return group;
 }
 
@@ -695,6 +1070,17 @@ function resolveRenderSettings(settings: Partial<RenderSettings> | undefined): R
   };
 }
 
+function resolveConnectorSettings(
+  settings: Partial<ConnectorSettings> | undefined,
+): ConnectorSettings {
+  return {
+    collapseReturnEdges:
+      typeof settings?.collapseReturnEdges === "boolean"
+        ? settings.collapseReturnEdges
+        : defaultConnectorSettings.collapseReturnEdges,
+  };
+}
+
 function resolvePresentationLayoutSettings(
   settings: Partial<PresentationLayoutSettings> | undefined,
 ): PresentationLayoutSettings {
@@ -705,6 +1091,9 @@ function resolvePresentationLayoutSettings(
     layoutTarget: isLayoutTarget(settings?.layoutTarget)
       ? settings.layoutTarget
       : defaultPresentationLayoutSettings.layoutTarget,
+    layoutType: isLayoutType(settings?.layoutType)
+      ? settings.layoutType
+      : defaultPresentationLayoutSettings.layoutType,
     minReadableTextSize: clampLocalNumber(
       settings?.minReadableTextSize,
       defaultPresentationLayoutSettings.minReadableTextSize,
@@ -740,6 +1129,16 @@ function resolvePresentationLayoutSettings(
 
 function isLayoutTarget(value: unknown): value is LayoutTarget {
   return value === "auto" || value === "slide-16-9" || value === "freeform";
+}
+
+function isLayoutType(value: unknown): value is LayoutType {
+  return (
+    value === "auto" ||
+    value === "process-flow" ||
+    value === "comparison" ||
+    value === "layered-architecture" ||
+    value === "freeform"
+  );
 }
 
 function isFitStrength(value: unknown): value is FitStrength {

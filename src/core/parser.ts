@@ -53,6 +53,16 @@ type EdgeParts = {
   right: string;
 };
 
+type InlineClassAssignment = {
+  sourceId: string;
+  classId: string;
+};
+
+type ShapeMetadataStatement = {
+  sourceId: string;
+  shape: string;
+};
+
 type ScanState = {
   quote: '"' | "'" | null;
   squareDepth: number;
@@ -177,6 +187,18 @@ function parseStatement(rawLine: string, lineNumber: number, context: ParseConte
 
   if (statement.startsWith("class ")) {
     parseClassAssignment(statement, lineNumber, context);
+    return;
+  }
+
+  const inlineClassAssignment = parseInlineClassAssignment(statement);
+  if (inlineClassAssignment) {
+    addClassAssignment(inlineClassAssignment.sourceId, inlineClassAssignment.classId, context);
+    return;
+  }
+
+  const shapeMetadata = parseShapeMetadataStatement(statement);
+  if (shapeMetadata) {
+    applyShapeMetadata(shapeMetadata, lineNumber, context);
     return;
   }
 
@@ -360,11 +382,78 @@ function parseClassAssignment(statement: string, lineNumber: number, context: Pa
   }
 
   for (const target of targets) {
-    const nodeId = normalizeScopedId(target);
-    const assignments = context.classAssignments.get(nodeId) ?? new Set<string>();
-    assignments.add(classId);
-    context.classAssignments.set(nodeId, assignments);
+    addClassAssignment(target, classId, context);
   }
+}
+
+function parseInlineClassAssignment(statement: string): InlineClassAssignment | null {
+  const match = statement.match(/^([A-Za-z_][\w-]*):::\s*([A-Za-z_][\w-]*)\s*;?$/);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    sourceId: match[1],
+    classId: match[2],
+  };
+}
+
+function addClassAssignment(sourceId: string, classId: string, context: ParseContext): void {
+  const nodeId = normalizeScopedId(sourceId);
+  const assignments = context.classAssignments.get(nodeId) ?? new Set<string>();
+  assignments.add(classId);
+  context.classAssignments.set(nodeId, assignments);
+}
+
+function parseShapeMetadataStatement(statement: string): ShapeMetadataStatement | null {
+  const match = statement.match(
+    /^([A-Za-z_][\w-]*)@\{\s*shape\s*:\s*([A-Za-z_][\w-]*)\s*\}\s*;?$/i,
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    sourceId: match[1],
+    shape: match[2],
+  };
+}
+
+function applyShapeMetadata(
+  metadata: ShapeMetadataStatement,
+  lineNumber: number,
+  context: ParseContext,
+): void {
+  const id = normalizeScopedId(metadata.sourceId);
+  const normalizedShape = metadata.shape.toLowerCase();
+
+  if (normalizedShape !== "rounded") {
+    addWarning(
+      `Ignored unsupported shape metadata "${metadata.shape}" on "${metadata.sourceId}".`,
+      lineNumber,
+      context,
+    );
+    return;
+  }
+
+  const node = context.nodes.get(id);
+  if (node) {
+    node.shape = "rounded";
+    return;
+  }
+
+  if (context.subgraphs.has(id)) {
+    addWarning(
+      `Ignored shape metadata "rounded" on subgraph "${metadata.sourceId}".`,
+      lineNumber,
+      context,
+    );
+    return;
+  }
+
+  addWarning(`Ignored shape metadata for unknown id "${metadata.sourceId}".`, lineNumber, context);
 }
 
 function parseEdge(edgeParts: EdgeParts, lineNumber: number, context: ParseContext): void {

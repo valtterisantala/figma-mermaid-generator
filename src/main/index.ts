@@ -1,11 +1,14 @@
 import "./polyfills";
 import { layoutDiagram, MermaidParseError, parseMermaidFlowchart } from "../core";
 import {
+  defaultConnectorSettings,
   defaultPresentationLayoutSettings,
   defaultRenderSettings,
   renderNativeNodes,
+  type ConnectorSettings,
   type FitStrength,
   type LayoutTarget,
+  type LayoutType,
   type PresentationLayoutSettings,
   type RenderSettings,
 } from "./render";
@@ -37,6 +40,7 @@ type UiRenderSettings = {
 };
 
 type UiLayoutSettings = {
+  layoutType?: LayoutType;
   layoutTarget?: LayoutTarget;
   fitStrength?: FitStrength;
   targetCanvasWidth?: number;
@@ -46,12 +50,17 @@ type UiLayoutSettings = {
   minReadableTextSize?: number;
 };
 
+type UiConnectorSettings = {
+  collapseReturnEdges?: boolean;
+};
+
 type RenderDiagramMessage = {
   type: "render-diagram";
   mermaid: string;
   replacePrevious: boolean;
   direction: DirectionOverride;
   spacing: SpacingPreset;
+  connectorSettings?: UiConnectorSettings;
   layoutSettings?: UiLayoutSettings;
   settings?: UiRenderSettings;
 };
@@ -89,6 +98,7 @@ figma.ui.onmessage = async (message: UiMessage) => {
     const layout = layoutDiagram(diagram, getLayoutSpacing(message.spacing, layoutSettings));
     const target = resolveRenderTarget(message.replacePrevious);
     const rootFrame = await renderNativeNodes(diagram, layout, {
+      connectorSettings: getConnectorSettings(message.connectorSettings),
       instanceId: target.instanceId,
       layoutSettings,
       placement: target.placement,
@@ -172,6 +182,15 @@ function getLayoutSpacing(
   return undefined;
 }
 
+function getConnectorSettings(settings: UiConnectorSettings | undefined): ConnectorSettings {
+  return {
+    collapseReturnEdges:
+      typeof settings?.collapseReturnEdges === "boolean"
+        ? settings.collapseReturnEdges
+        : defaultConnectorSettings.collapseReturnEdges,
+  };
+}
+
 function getPresentationLayoutSettings(
   settings: UiLayoutSettings | undefined,
 ): PresentationLayoutSettings {
@@ -182,6 +201,9 @@ function getPresentationLayoutSettings(
     layoutTarget: isLayoutTarget(settings?.layoutTarget)
       ? settings.layoutTarget
       : defaultPresentationLayoutSettings.layoutTarget,
+    layoutType: isLayoutType(settings?.layoutType)
+      ? settings.layoutType
+      : defaultPresentationLayoutSettings.layoutType,
     minReadableTextSize: clampNumber(
       settings?.minReadableTextSize,
       defaultPresentationLayoutSettings.minReadableTextSize,
@@ -217,6 +239,16 @@ function getPresentationLayoutSettings(
 
 function isLayoutTarget(value: unknown): value is LayoutTarget {
   return value === "auto" || value === "slide-16-9" || value === "freeform";
+}
+
+function isLayoutType(value: unknown): value is LayoutType {
+  return (
+    value === "auto" ||
+    value === "process-flow" ||
+    value === "comparison" ||
+    value === "layered-architecture" ||
+    value === "freeform"
+  );
 }
 
 function isFitStrength(value: unknown): value is FitStrength {

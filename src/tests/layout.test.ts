@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { basicFlowchart } from "../fixtures/basic-flowchart";
-import { runtimeHostingArchitectureComparison } from "../fixtures";
+import {
+  fullConnectorStressFlowchart,
+  layeredArchitectureFlowchart,
+  runtimeHostingArchitectureComparison,
+} from "../fixtures";
 import { estimateMultilineTextBox, layoutDiagram, parseMermaidFlowchart } from "../core";
 import { addVisibleSubgraphSpacingForTest } from "../main/render";
 
@@ -118,6 +122,23 @@ describe("layoutDiagram", () => {
         node.y + node.height,
       );
     }
+  });
+
+  it("does not inflate subgraph layout bounds from internal edge route points", () => {
+    const diagram = parseMermaidFlowchart(`flowchart LR
+      subgraph Cluster[Cluster]
+        A[Alpha] --> B[Beta]
+        B --> A
+      end`);
+    const layout = layoutDiagram(diagram);
+    const subgraph = layout.subgraphs.find((entry) => entry.id === "Cluster");
+    const memberNodes = layout.nodes.filter((node) => node.id === "A" || node.id === "B");
+    const nodeMinY = Math.min(...memberNodes.map((node) => node.y));
+    const nodeMaxY = Math.max(...memberNodes.map((node) => node.y + node.height));
+
+    expect(subgraph).toBeDefined();
+    expect(subgraph?.y).toBe(nodeMinY - 32);
+    expect((subgraph?.y ?? 0) + (subgraph?.height ?? 0)).toBe(nodeMaxY + 32);
   });
 
   it("lays out edges that connect to known subgraph ids", () => {
@@ -557,5 +578,143 @@ describe("layoutDiagram", () => {
 
     expect(proposed?.x).toBe((current?.x ?? 0) + (current?.width ?? 0) + 28);
     expect(proposed?.y).toBe(current?.y);
+  });
+
+  it("avoids very wide strips for three tall comparison subgraphs in slide 16:9 mode", () => {
+    const diagram = parseMermaidFlowchart(`flowchart LR
+      subgraph Current[Current Solution]
+        direction TB
+        A1[One] --> A2[Two] --> A3[Three] --> A4[Four] --> A5[Five]
+      end
+      subgraph Local[Local Hosting]
+        direction TB
+        B1[One] --> B2[Two] --> B3[Three] --> B4[Four] --> B5[Five]
+      end
+      subgraph Hybrid[Local Hosting + Local Realtime]
+        direction TB
+        C1[One] --> C2[Two] --> C3[Three] --> C4[Four] --> C5[Five]
+      end`);
+    const layout = {
+      nodes: [],
+      edges: [],
+      subgraphs: [
+        { id: "Current", x: 0, y: 0, width: 600, height: 620 },
+        { id: "Local", x: 640, y: 0, width: 600, height: 620 },
+        { id: "Hybrid", x: 1280, y: 0, width: 600, height: 620 },
+      ],
+    };
+    const adjusted = addVisibleSubgraphSpacingForTest(
+      diagram,
+      layout,
+      new Map([
+        ["Current", 28],
+        ["Local", 28],
+        ["Hybrid", 28],
+      ]),
+      {
+        layoutTarget: "slide-16-9",
+        targetCanvasWidth: 1920,
+        targetCanvasHeight: 1080,
+        slideSafeMargin: 80,
+      },
+    );
+    const current = adjusted.subgraphs.find((subgraph) => subgraph.id === "Current");
+    const local = adjusted.subgraphs.find((subgraph) => subgraph.id === "Local");
+    const hybrid = adjusted.subgraphs.find((subgraph) => subgraph.id === "Hybrid");
+
+    expect(current).toBeDefined();
+    expect(local).toBeDefined();
+    expect(hybrid).toBeDefined();
+    expect(new Set([current?.y, local?.y, hybrid?.y]).size).toBeGreaterThan(1);
+  });
+
+  it("places layered architecture zones with application-centered right-side service/package blocks", () => {
+    const diagram = parseMermaidFlowchart(layeredArchitectureFlowchart);
+    const layout = {
+      nodes: [],
+      edges: [],
+      subgraphs: [
+        { id: "Services", x: 400, y: 300, width: 220, height: 160 },
+        { id: "Packages", x: 100, y: 300, width: 240, height: 260 },
+        { id: "App", x: 300, y: 100, width: 260, height: 220 },
+        { id: "Surfaces", x: 200, y: 100, width: 240, height: 220 },
+        { id: "Users", x: 100, y: 100, width: 200, height: 220 },
+      ],
+    };
+    const adjusted = addVisibleSubgraphSpacingForTest(
+      diagram,
+      layout,
+      new Map([
+        ["Users", 28],
+        ["Surfaces", 28],
+        ["App", 28],
+        ["Services", 28],
+        ["Packages", 28],
+      ]),
+      {
+        layoutType: "layered-architecture",
+      },
+    );
+    const users = adjusted.subgraphs.find((subgraph) => subgraph.id === "Users");
+    const surfaces = adjusted.subgraphs.find((subgraph) => subgraph.id === "Surfaces");
+    const app = adjusted.subgraphs.find((subgraph) => subgraph.id === "App");
+    const services = adjusted.subgraphs.find((subgraph) => subgraph.id === "Services");
+    const packages = adjusted.subgraphs.find((subgraph) => subgraph.id === "Packages");
+
+    expect(users).toBeDefined();
+    expect(surfaces).toBeDefined();
+    expect(app).toBeDefined();
+    expect(services).toBeDefined();
+    expect(packages).toBeDefined();
+    expect(users?.x).toBeLessThan(surfaces?.x ?? 0);
+    expect(surfaces?.x).toBeLessThan(app?.x ?? 0);
+    expect(app?.x).toBeLessThan(services?.x ?? 0);
+    expect(services?.x).toBe(packages?.x);
+    expect(packages?.y).toBeGreaterThan(services?.y ?? 0);
+  });
+
+  it("keeps source-ordered top-level LR subgraphs in one row for chain diagrams", () => {
+    const diagram = parseMermaidFlowchart(fullConnectorStressFlowchart);
+    const layout = layoutDiagram(diagram);
+    const adjusted = addVisibleSubgraphSpacingForTest(
+      diagram,
+      layout,
+      new Map([
+        ["Channel", 28],
+        ["Orchestration", 28],
+        ["Engine", 28],
+        ["Outputs", 28],
+      ]),
+    );
+    const subgraphs = ["Channel", "Orchestration", "Engine", "Outputs"].map((id) => {
+      const subgraph = adjusted.subgraphs.find((entry) => entry.id === id);
+
+      if (!subgraph) {
+        throw new Error(`Missing subgraph "${id}".`);
+      }
+
+      return subgraph;
+    });
+
+    expect(new Set(subgraphs.map((subgraph) => subgraph.y))).toHaveLength(1);
+
+    for (let index = 1; index < subgraphs.length; index += 1) {
+      expect(subgraphs[index].x).toBeGreaterThan(
+        subgraphs[index - 1].x + subgraphs[index - 1].width,
+      );
+    }
+
+    const xByNodeId = new Map(adjusted.nodes.map((node) => [node.id, node.x]));
+
+    for (const [leftId, rightId] of [
+      ["A", "B"],
+      ["B", "C"],
+      ["C", "D"],
+      ["D", "E"],
+      ["E", "F"],
+      ["F", "G"],
+    ] satisfies Array<[string, string]>) {
+      expect(xByNodeId.get(rightId)).toBeGreaterThan(xByNodeId.get(leftId) ?? 0);
+    }
   });
 });

@@ -94,7 +94,7 @@ export function layoutDiagram(
   );
   const normalizedNodes = normalizeLrSubgraphLaneOrder(diagram, repeatedParallelNormalizedNodes);
   const subgraphs = diagram.subgraphs.map((subgraph) =>
-    toLayoutSubgraph(subgraph, normalizedNodes, edges, resolvedOptions.subgraphPadding),
+    toLayoutSubgraph(subgraph, normalizedNodes, resolvedOptions.subgraphPadding),
   );
 
   return {
@@ -560,12 +560,10 @@ function toLayoutEdge(edge: DiagramEdge, label: DagreEdgeLabel): DiagramLayoutEd
 function toLayoutSubgraph(
   subgraph: DiagramSubgraph,
   nodes: DiagramLayoutNode[],
-  edges: DiagramLayoutEdge[],
   padding: number,
 ): DiagramLayoutResult["subgraphs"][number] {
   const memberNodeIds = new Set(subgraph.nodeIds);
-  const memberEdgeIds = new Set(subgraph.edgeIds);
-  const memberBoxes = nodes
+  const boxes = nodes
     .filter((node) => memberNodeIds.has(node.id))
     .map((node) => ({
       maxX: node.x + node.width,
@@ -573,16 +571,6 @@ function toLayoutSubgraph(
       minX: node.x,
       minY: node.y,
     }));
-  const memberPoints = edges
-    .filter((edge) => memberEdgeIds.has(edge.id))
-    .flatMap((edge) => edge.points)
-    .map((point) => ({
-      maxX: point.x,
-      maxY: point.y,
-      minX: point.x,
-      minY: point.y,
-    }));
-  const boxes = [...memberBoxes, ...memberPoints];
 
   if (boxes.length === 0) {
     return {
